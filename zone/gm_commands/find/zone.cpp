@@ -15,15 +15,23 @@ void FindZone(Client *c, const Seperator *sep)
     if (is_expansion_search) {
         int expansion_id = Strings::ToInt(sep->arg[3]);
 
-        // Ensure expansion_id is within valid range
-        if (expansion_id < 0 || expansion_id >= std::size(Expansion::ExpansionName)) {
-            c->Message(Chat::Red, "Invalid expansion ID: %d. Please enter a value between 0 and %d.", expansion_id, std::size(Expansion::ExpansionName) - 1);
+        // Ensure expansion_id is within the valid range OR is 99 (test zones)
+        if ((expansion_id < 0 || expansion_id >= std::size(Expansion::ExpansionName)) && expansion_id != 99) {
+            c->Message(Chat::White, "Invalid expansion ID: %d. Please enter a value between 0 and %d, or 99.", 
+                       expansion_id, std::size(Expansion::ExpansionName) - 1);
             return; // Exit gracefully
         }
 
         query += fmt::format("expansion = {}", expansion_id);
-        search_string = Expansion::ExpansionName[expansion_id];
-        search_type   = "expansion";
+
+        // Handle test expansion separately
+        if (expansion_id == 99) {
+            search_string = "Test Zones";
+        } else {
+            search_string = Expansion::ExpansionName[expansion_id];
+        }
+
+        search_type = "expansion";
     } 
     else if (is_id_search) {
         query += fmt::format("zoneidnumber = {}", Strings::ToUnsignedInt(sep->arg[2]));
