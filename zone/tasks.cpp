@@ -15,9 +15,8 @@ extern QueryServ *QServ;
 void Client::LoadClientTaskState()
 {
 	if (RuleB(TaskSystem, EnableTaskSystem) && task_manager) {
-		LoadClientSharedCompletedTasks();
-
 		safe_delete(task_state);
+
 		task_state = new ClientTaskState();
 		if (!task_manager->LoadClientState(this, task_state)) {
 			safe_delete(task_state);
