@@ -591,7 +591,7 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 
 			auto *s = (ServerZoneStateChange_Struct *) pack->pBuffer;
 			LogInfo("Zone shutdown by {}.", s->admin_name);
-			Zone::Shutdown();
+			zone->Shutdown();
 		}
 		break;
 	}
@@ -4499,13 +4499,6 @@ void WorldServer::QueueReload(ServerReload::Request r)
 {
 	m_reload_mutex.lock();
 	int64_t reload_at = r.reload_at_unix - std::time(nullptr);
-
-	// If the reload is set to happen now, process it immediately versus queuing it
-	if (reload_at <= 0) {
-		ProcessReload(r);
-		m_reload_mutex.unlock();
-		return;
-	}
 
 	LogInfo(
 		"Queuing reload for [{}] ({}) to reload in [{}]",
