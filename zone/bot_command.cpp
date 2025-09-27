@@ -57,12 +57,12 @@
 #include "water_map.h"
 #include "worldserver.h"
 #include "mob.h"
+#include "bot_database.h"
 
 #include <fmt/format.h>
 
 extern QueryServ* QServ;
 extern WorldServer worldserver;
-extern TaskManager *task_manager;
 
 int bot_command_count;
 
@@ -164,7 +164,7 @@ int bot_command_init(void)
 		bot_command_add("inventoryremove", "Removes an item from a bot's inventory", AccountStatus::Player, bot_command_inventory_remove) ||
 		bot_command_add("inventorywindow", "Displays all items in a bot's inventory in a pop-up window", AccountStatus::Player, bot_command_inventory_window) ||
 		bot_command_add("itemuse", "Elicits a report from spawned bots that can use the item on your cursor (option 'empty' yields only empty slots)", AccountStatus::Player, bot_command_item_use) ||
-		bot_command_add("maxmeleerange", "Toggles whether your bot is at max melee range or not. This will disable all special abilities, including taunt.", AccountStatus::Player, bot_command_max_melee_range) ||		
+		bot_command_add("maxmeleerange", "Toggles whether your bot is at max melee range or not. This will disable all special abilities, including taunt.", AccountStatus::Player, bot_command_max_melee_range) ||
 		bot_command_add("owneroption", "Sets options available to bot owners", AccountStatus::Player, bot_command_owner_option) ||
 		bot_command_add("pet", "Lists the available bot pet [subcommands]", AccountStatus::Player, bot_command_pet) ||
 		bot_command_add("petgetlost", "Orders a bot to remove its summoned pet", AccountStatus::Player, bot_command_pet_get_lost) ||
@@ -188,11 +188,11 @@ int bot_command_init(void)
 		bot_command_add("spellmaxhppct", "Controls at what HP percent a bot will stop casting different spell types", AccountStatus::Player, bot_command_spell_max_hp_pct) ||
 		bot_command_add("spellmaxmanapct", "Controls at what mana percent a bot will stop casting different spell types", AccountStatus::Player, bot_command_spell_max_mana_pct) ||
 		bot_command_add("spellmaxthresholds", "Controls the minimum target HP threshold for a spell to be cast for a specific type", AccountStatus::Player, bot_command_spell_max_thresholds) ||
-		bot_command_add("spellminhppct", "Controls at what HP percent a bot will start casting different spell types", AccountStatus::Player, bot_command_spell_min_hp_pct) ||		
+		bot_command_add("spellminhppct", "Controls at what HP percent a bot will start casting different spell types", AccountStatus::Player, bot_command_spell_min_hp_pct) ||
 		bot_command_add("spellminmanapct", "Controls at what mana percent a bot will start casting different spell types", AccountStatus::Player, bot_command_spell_min_mana_pct) ||
-		bot_command_add("spellminthresholds", "Controls the maximum target HP threshold for a spell to be cast for a specific type", AccountStatus::Player, bot_command_spell_min_thresholds) ||		
+		bot_command_add("spellminthresholds", "Controls the maximum target HP threshold for a spell to be cast for a specific type", AccountStatus::Player, bot_command_spell_min_thresholds) ||
 		bot_command_add("spellresistlimits", "Controls the resist limits for bots to cast spells on their target", AccountStatus::Player, bot_command_spell_resist_limits) ||
-		bot_command_add("spellpursuepriority", "Controls the order of casts by spell type when pursuing in combat", AccountStatus::Player, bot_command_spell_pursue_priority) ||				
+		bot_command_add("spellpursuepriority", "Controls the order of casts by spell type when pursuing in combat", AccountStatus::Player, bot_command_spell_pursue_priority) ||
 		bot_command_add("spelltargetcount", "Sets the required target amount for group/AE spells by spell type", AccountStatus::Player, bot_command_spell_target_count) ||
 		bot_command_add("spellinfo", "Opens a dialogue window with spell info", AccountStatus::Player, bot_spell_info_dialogue_window) ||
 		bot_command_add("spells", "Lists all Spells learned by the Bot.", AccountStatus::Player, bot_command_spell_list) ||
@@ -218,6 +218,13 @@ int bot_command_init(void)
 
 	std::vector<std::pair<std::string, uint8>> injected_bot_command_settings;
 	std::vector<std::string> orphaned_bot_command_settings;
+
+	if (RuleB(Bots, RunSpellTypeChecksOnBoot)) {
+		LogBotSpellTypeChecks("Running SpellType checks. There may be some spells that are mislabeled as incorrect. Use this as a loose guideline.");
+		database.botdb.CheckBotSpells();
+	}
+
+	database.botdb.MapCommandedSpellTypeMinLevels();
 
 	for (auto bcs_iter : bot_command_settings) {
 
@@ -460,7 +467,7 @@ uint32 helper_bot_create(Client *bot_owner, std::string bot_name, uint8 bot_clas
 
 	bool available_flag = false;
 
-	!database.botdb.QueryNameAvailablity(bot_name, available_flag);
+	!database.botdb.QueryNameAvailability(bot_name, available_flag);
 
 	if (!available_flag) {
 		bot_owner->Message(
@@ -509,87 +516,30 @@ uint32 helper_bot_create(Client *bot_owner, std::string bot_name, uint8 bot_clas
 		return bot_id;
 	}
 
-	auto bot_creation_limit = bot_owner->GetBotCreationLimit();
-	auto bot_creation_limit_class = bot_owner->GetBotCreationLimit(bot_class);
+	if (!Bot::CheckHighEnoughLevelForBots(bot_owner)) {
+		return bot_id;
+	}
+
+	if (!Bot::CheckHighEnoughLevelForBots(bot_owner, bot_class)) {
+		return bot_id;
+	}
 
 	uint32 bot_count = 0;
 	uint32 bot_class_count = 0;
+
 	if (!database.botdb.QueryBotCount(bot_owner->CharacterID(), bot_class, bot_count, bot_class_count)) {
 		bot_owner->Message(Chat::Yellow, "Failed to query bot count.");
+
 		return bot_id;
 	}
 
-	if (bot_creation_limit >= 0 && bot_count >= bot_creation_limit) {
-		std::string message;
-
-		if (bot_creation_limit) {
-			message = fmt::format(
-				"You cannot create anymore than {} bot{}.",
-				bot_creation_limit,
-				bot_creation_limit != 1 ? "s" : ""
-			);
-		} else {
-			message = "You cannot create any bots.";
-		}
-
-		bot_owner->Message(Chat::Yellow, message.c_str());
+	if (!Bot::CheckCreateLimit(bot_owner, bot_count)) {
 		return bot_id;
 	}
 
-	if (bot_creation_limit_class >= 0 && bot_class_count >= bot_creation_limit_class) {
-		std::string message;
-
-		if (bot_creation_limit_class) {
-			message = fmt::format(
-				"You cannot create anymore than {} {} bot{}.",
-				bot_creation_limit_class,
-				GetClassIDName(bot_class),
-				bot_creation_limit_class != 1 ? "s" : ""
-			);
-		} else {
-			message = fmt::format(
-				"You cannot create any {} bots.",
-				GetClassIDName(bot_class)
-			);
-		}
-
-		bot_owner->Message(Chat::Yellow, message.c_str());
+	if (!Bot::CheckCreateLimit(bot_owner, bot_class_count, bot_class)) {
 		return bot_id;
 	}
-
-	auto bot_character_level = bot_owner->GetBotRequiredLevel();
-
-	if (
-		bot_character_level >= 0 &&
-		bot_owner->GetLevel() < bot_character_level
-	) {
-		bot_owner->Message(
-			Chat::Yellow,
-			fmt::format(
-				"You must be level {} to use bots.",
-				bot_character_level
-			).c_str()
-		);
-		return bot_id;
-	}
-
-	auto bot_character_level_class = bot_owner->GetBotRequiredLevel(bot_class);
-
-	if (
-		bot_character_level_class >= 0 &&
-		bot_owner->GetLevel() < bot_character_level_class
-	) {
-		bot_owner->Message(
-			Chat::Yellow,
-			fmt::format(
-				"You must be level {} to use {} bots.",
-				bot_character_level_class,
-				GetClassIDName(bot_class)
-			).c_str()
-		);
-		return bot_id;
-	}
-
 
 	auto my_bot = new Bot(Bot::CreateDefaultNPCTypeStructForBot(bot_name, "", bot_owner->GetLevel(), bot_race, bot_class, bot_gender), bot_owner);
 
@@ -796,10 +746,10 @@ void helper_send_usage_required_bots(Client *bot_owner, uint16 spell_type)
 		}
 	}
 
-	auto& spell_map = bot->GetCommandedSpellTypesMinLevels();
+	auto spell_map = database.botdb.GetCommandedSpellTypesMinLevels();
 
 	if (spell_map.empty()) {
-		bot_owner->Message(Chat::Yellow, "No bots are capable of casting this spell type");
+		bot_owner->Message(Chat::Yellow, "No bots are capable of casting this spell type.");
 		return;
 	}
 
@@ -810,7 +760,7 @@ void helper_send_usage_required_bots(Client *bot_owner, uint16 spell_type)
 		auto spell_type_itr = spell_map.find(spell_type);
 		auto class_itr = spell_type_itr->second.find(i);
 		const auto& spell_info = class_itr->second;
-			
+
 		if (spell_info.min_level < UINT8_MAX) {
 			found = true;
 

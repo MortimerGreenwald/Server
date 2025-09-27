@@ -880,6 +880,21 @@ void Perl_NPC_ReturnHandinItems(NPC *self, Client* c)
 	self->ReturnHandinItems(c);
 }
 
+Spawn2* Perl_NPC_GetSpawn(NPC* self)
+{
+	return self->GetSpawn();
+}
+
+void Perl_NPC_SetNPCTintIndex(NPC* self, uint32 index)
+{
+	self->SetNPCTintIndex(index);
+}
+
+uint32 Perl_NPC_GetNPCTintIndex(NPC* self)
+{
+	return self->GetNPCTintIndex();
+}
+
 void perl_register_npc()
 {
 	perl::interpreter perl(PERL_GET_THX);
@@ -949,6 +964,7 @@ void perl_register_npc()
 	package.add("GetNPCSpellsEffectsID", &Perl_NPC_GetNPCSpellsEffectsID);
 	package.add("GetNPCSpellsID", &Perl_NPC_GetNPCSpellsID);
 	package.add("GetNPCStat", &Perl_NPC_GetNPCStat);
+	package.add("GetNPCTintIndex", &Perl_NPC_GetNPCTintIndex);
 	package.add("GetPetSpellID", &Perl_NPC_GetPetSpellID);
 	package.add("GetPlatinum", &Perl_NPC_GetPlatinum);
 	package.add("GetPrimSkill", &Perl_NPC_GetPrimSkill);
@@ -958,6 +974,7 @@ void perl_register_npc()
 	package.add("GetSilver", &Perl_NPC_GetSilver);
 	package.add("GetSlowMitigation", &Perl_NPC_GetSlowMitigation);
 	package.add("GetSp2", &Perl_NPC_GetSp2);
+	package.add("GetSpawn", &Perl_NPC_GetSpawn);
 	package.add("GetSpawnKillCount", &Perl_NPC_GetSpawnKillCount);
 	package.add("GetSpawnPointH", &Perl_NPC_GetSpawnPointH);
 	package.add("GetSpawnPointID", &Perl_NPC_GetSpawnPointID);
@@ -1028,6 +1045,7 @@ void perl_register_npc()
 	package.add("SetGold", &Perl_NPC_SetGold);
 	package.add("SetGrid", &Perl_NPC_SetGrid);
 	package.add("SetNPCFactionID", &Perl_NPC_SetNPCFactionID);
+	package.add("SetNPCTintIndex", &Perl_NPC_SetNPCTintIndex);
 	package.add("SetPetSpellID", &Perl_NPC_SetPetSpellID);
 	package.add("SetPlatinum", &Perl_NPC_SetPlatinum);
 	package.add("SetPrimSkill", &Perl_NPC_SetPrimSkill);

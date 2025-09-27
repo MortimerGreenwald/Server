@@ -352,9 +352,9 @@ void Client::OPCombatAbility(const CombatAbility_Struct *ca_atk)
 
 	if (ca_atk->m_skill == EQ::skills::SkillBash) { // SLAM - Bash without a shield equipped
 		switch (GetRace()) {
-			case OGRE:
-			case TROLL:
-			case BARBARIAN:
+			case Race::Ogre:
+			case Race::Troll:
+			case Race::Barbarian:
 				bypass_skill_check = true;
 			default:
 				break;
@@ -1907,7 +1907,7 @@ void NPC::DoClassAttacks(Mob *target) {
 		target->GetBodyType() != BodyType::Undead &&
 		taunt_time &&
 		type_of_pet &&
-		type_of_pet != petTargetLock &&
+		type_of_pet != PetType::TargetLock &&
 		DistanceSquared(GetPosition(), target->GetPosition()) <= (RuleI(Pets, PetTauntRange) * RuleI(Pets, PetTauntRange))
 	) {
 		GetOwner()->MessageString(Chat::PetResponse, PET_TAUNTING);

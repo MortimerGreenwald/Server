@@ -267,7 +267,7 @@ void Mob::MakePoweredPet(uint16 spell_id, const char* pettype, int16 petpower,
 	}
 
 	//this takes ownership of the npc_type data
-	auto npc = new Pet(npc_type, this, (PetType)record.petcontrol, spell_id, record.petpower);
+	auto npc = new Pet(npc_type, this, record.petcontrol, spell_id, record.petpower);
 
 	// Now that we have an actual object to interact with, load
 	// the base items for the pet. These are always loaded
@@ -295,7 +295,7 @@ void Mob::MakePoweredPet(uint16 spell_id, const char* pettype, int16 petpower,
 	SetPetID(npc->GetID());
 	// We need to handle PetType 5 (petHatelist), add the current target to the hatelist of the pet
 
-	if (record.petcontrol == petTargetLock)
+	if (record.petcontrol == PetType::TargetLock)
 	{
 		Mob* m_target = GetTarget();
 
@@ -341,7 +341,7 @@ void NPC::TryDepopTargetLockedPets(Mob* current_target) {
 			return;
 		}
 		//Use when pets are given petype 5
-		if (IsPet() && GetPetType() == petTargetLock && GetPetTargetLockID()) {
+		if (IsPet() && GetPetType() == PetType::TargetLock && GetPetTargetLockID()) {
 			CastSpell(SPELL_UNSUMMON_SELF, GetID()); //Live like behavior, damages self for 20K
 			if (!HasDied()) {
 				Kill(); //Ensure pet dies if over 20k HP.
@@ -356,11 +356,11 @@ void NPC::TryDepopTargetLockedPets(Mob* current_target) {
 /* This is why the pets ghost - pets were being spawned too far away from its npc owner and some
 into walls or objects (+10), this sometimes creates the "ghost" effect. I changed to +2 (as close as I
 could get while it still looked good). I also noticed this can happen if an NPC is spawned on the same spot of another or in a related bad spot.*/
-Pet::Pet(NPCType *type_data, Mob *owner, PetType type, uint16 spell_id, int16 power)
+Pet::Pet(NPCType *type_data, Mob *owner, uint8 pet_type, uint16 spell_id, int16 power)
 : NPC(type_data, 0, owner->GetPosition() + glm::vec4(2.0f, 2.0f, 0.0f, 0.0f), GravityBehavior::Water)
 {
 	GiveNPCTypeData(type_data);
-	SetPetType(type);
+	SetPetType(pet_type);
 	SetPetPower(power);
 	SetOwnerID(owner ? owner->GetID() : 0);
 	SetPetSpellID(spell_id);
@@ -374,8 +374,8 @@ Pet::Pet(NPCType *type_data, Mob *owner, PetType type, uint16 spell_id, int16 po
 	if (owner && owner->IsClient()) {
 		if (!(owner->CastToClient()->ClientVersionBit() & EQ::versions::maskUFAndLater)) {
 			if (
-				(GetPetType() != petFamiliar && GetPetType() != petAnimation) ||
-				aabonuses.PetCommands[PET_TAUNT]
+				(GetPetType() != PetType::Familiar && GetPetType() != PetType::Animation) ||
+				aabonuses.PetCommands[PetCommand::Taunt]
 			) {
 				SetTaunting(true);
 			}
@@ -547,22 +547,22 @@ void NPC::SetPetState(SpellBuff_Struct *pet_buffs, uint32 *items) {
 		if (buffs[j1].spellid <= (uint32)SPDAT_RECORDS) {
 			for (int x1=0; x1 < EFFECT_COUNT; x1++) {
 				switch (spells[buffs[j1].spellid].effect_id[x1]) {
-					case SE_AddMeleeProc:
-					case SE_WeaponProc:
+					case SpellEffect::AddMeleeProc:
+					case SpellEffect::WeaponProc:
 						// We need to reapply buff based procs
 						// We need to do this here so suspended pets also regain their procs.
 						AddProcToWeapon(GetProcID(buffs[j1].spellid,x1), false, 100+spells[buffs[j1].spellid].limit_value[x1], buffs[j1].spellid, buffs[j1].casterlevel, GetSpellProcLimitTimer(buffs[j1].spellid, ProcType::MELEE_PROC));
 						break;
-					case SE_DefensiveProc:
+					case SpellEffect::DefensiveProc:
 						AddDefensiveProc(GetProcID(buffs[j1].spellid, x1), 100 + spells[buffs[j1].spellid].limit_value[x1], buffs[j1].spellid, GetSpellProcLimitTimer(buffs[j1].spellid, ProcType::DEFENSIVE_PROC));
 						break;
-					case SE_RangedProc:
+					case SpellEffect::RangedProc:
 						AddRangedProc(GetProcID(buffs[j1].spellid, x1), 100 + spells[buffs[j1].spellid].limit_value[x1], buffs[j1].spellid, GetSpellProcLimitTimer(buffs[j1].spellid, ProcType::RANGED_PROC));
 						break;
-					case SE_Charm:
-					case SE_Rune:
-					case SE_NegateAttacks:
-					case SE_Illusion:
+					case SpellEffect::Charm:
+					case SpellEffect::Rune:
+					case SpellEffect::NegateAttacks:
+					case SpellEffect::Illusion:
 						buffs[j1].spellid = SPELL_UNKNOWN;
 						pet_buffs[j1].spellid = SPELLBOOK_UNKNOWN;
 						pet_buffs[j1].effect_type = 0;
@@ -587,7 +587,7 @@ void NPC::SetPetState(SpellBuff_Struct *pet_buffs, uint32 *items) {
 
 		if (item2) {
 			bool noDrop           = (item2->NoDrop == 0); // Field is reverse logic
-			bool petCanHaveNoDrop = (RuleB(Pets, CanTakeNoDrop) && _CLIENTPET(this) && GetPetType() <= petOther);
+			bool petCanHaveNoDrop = (RuleB(Pets, CanTakeNoDrop) && _CLIENTPET(this) && GetPetType() <= PetType::Normal);
 
 			if (!noDrop || petCanHaveNoDrop) {
 				AddLootDrop(item2, LootdropEntriesRepository::NewNpcEntity(), true);

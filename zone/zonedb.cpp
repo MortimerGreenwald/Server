@@ -164,6 +164,7 @@ void ZoneDatabase::UpdateRespawnTime(uint32 spawn2_id, uint16 instance_id, uint3
 			.id = static_cast<int32_t>(spawn2_id),
 			.start = static_cast<int32_t>(current_time),
 			.duration = static_cast<int32_t>(time_left),
+			.expire_at = current_time + time_left,
 			.instance_id = static_cast<int16_t>(instance_id)
 		}
 	);
@@ -1731,6 +1732,7 @@ const NPCType *ZoneDatabase::LoadNPCTypesData(uint32 npc_type_id, bool bulk_load
 		t->attack_count       = n.attack_count;
 		t->is_parcel_merchant = n.is_parcel_merchant ? true : false;
 		t->greed              = n.greed;
+		t->m_npc_tint_id      = n.npc_tint_id;
 
 		if (!n.special_abilities.empty()) {
 			strn0cpy(t->special_abilities, n.special_abilities.c_str(), 512);
@@ -2637,7 +2639,7 @@ int64 ZoneDatabase::GetBlockedSpellsCount(uint32 zone_id)
 
 bool ZoneDatabase::LoadBlockedSpells(int64 blocked_spells_count, ZoneSpellsBlocked* into, uint32 zone_id)
 {
-	LogInfo("Loading Blocked Spells from database for {} ({}).", zone_store.GetZoneName(zone_id, true), zone_id);
+	LogInfo("Loading Blocked Spells from database for {} ({}).", ZoneStore::Instance()->GetZoneName(zone_id, true), zone_id);
 
 	const auto& l = BlockedSpellsRepository::GetWhere(
 		*this,
@@ -2659,7 +2661,7 @@ bool ZoneDatabase::LoadBlockedSpells(int64 blocked_spells_count, ZoneSpellsBlock
 			LogError(
 				"Blocked spells count of {} exceeded for {} ({}).",
 				blocked_spells_count,
-				zone_store.GetZoneName(zone_id, true),
+				ZoneStore::Instance()->GetZoneName(zone_id, true),
 				zone_id
 			);
 			break;
@@ -3007,12 +3009,12 @@ void ZoneDatabase::LoadBuffs(Client *client)
 			continue;
 		}
 
-		if (IsEffectInSpell(buffs[slot_id].spellid, SE_Charm)) {
+		if (IsEffectInSpell(buffs[slot_id].spellid, SpellEffect::Charm)) {
 			buffs[slot_id].spellid = SPELL_UNKNOWN;
 			break;
 		}
 
-		if (IsEffectInSpell(buffs[slot_id].spellid, SE_Illusion)) {
+		if (IsEffectInSpell(buffs[slot_id].spellid, SpellEffect::Illusion)) {
 			if (buffs[slot_id].persistant_buff) {
 				break;
 			}
@@ -4269,4 +4271,29 @@ void ZoneDatabase::SaveCharacterEXPModifier(Client* c)
 			.exp_modifier = m.exp_modifier
 		}
 	);
+}
+
+void ZoneDatabase::LoadCharacterTitleSets(Client* c)
+{
+	if (!zone || !c) {
+		return;
+	}
+
+	const auto& l = PlayerTitlesetsRepository::GetWhere(
+		*this,
+		fmt::format(
+			"`char_id` = {}",
+			c->CharacterID()
+		)
+	);
+
+	if (l.empty()) {
+		return;
+	}
+
+	const uint32 character_id = c->CharacterID();
+
+	for (const auto& e : l) {
+		c->EnableTitle(e.title_set, false);
+	}
 }

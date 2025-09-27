@@ -839,6 +839,10 @@ void MobMovementManager::SendCommandToClients(
 				continue;
 			}
 
+			if (c->IsIdle()) {
+				continue;
+			}
+
 			_impl->Stats.TotalSent++;
 
 			if (anim != 0) {
@@ -876,6 +880,10 @@ void MobMovementManager::SendCommandToClients(
 			}
 
 			if (ignore_client && c == ignore_client) {
+				continue;
+			}
+
+			if (c->IsIdle()) {
 				continue;
 			}
 
@@ -933,16 +941,11 @@ void MobMovementManager::SendCommandToClients(
 
 float MobMovementManager::FixHeading(float in)
 {
-	auto h = in;
-	while (h > 512.0) {
-		h -= 512.0;
+	int h = static_cast<int>(in) % 512;
+	if (h < 0) {
+		h += 512;
 	}
-
-	while (h < 0.0) {
-		h += 512.0;
-	}
-
-	return h;
+	return static_cast<float>(h);
 }
 
 void MobMovementManager::DumpStats(Client *client)

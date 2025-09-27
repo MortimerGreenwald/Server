@@ -36,6 +36,7 @@
 #include "../common/repositories/bot_pet_buffs_repository.h"
 #include "../common/repositories/bot_pet_inventories_repository.h"
 #include "../common/repositories/bot_spell_casting_chances_repository.h"
+#include "../common/repositories/bot_spells_entries_repository.h"
 #include "../common/repositories/bot_settings_repository.h"
 #include "../common/repositories/bot_stances_repository.h"
 #include "../common/repositories/bot_timers_repository.h"
@@ -73,13 +74,61 @@ bool BotDatabase::LoadBotCommandSettings(std::map<std::string, std::pair<uint8, 
 	return true;
 }
 
+template<typename T1, typename T2>
+inline std::vector<std::string> join_pair(
+	const std::string &glue,
+	const std::pair<char, char> &encapsulation,
+	const std::vector<std::pair<T1, T2>> &src
+)
+{
+	if (src.empty()) {
+		return {};
+	}
+
+	std::vector<std::string> output;
+
+	for (const std::pair<T1, T2> &src_iter: src) {
+		output.emplace_back(
+
+			fmt::format(
+				"{}{}{}{}{}{}{}",
+				encapsulation.first,
+				src_iter.first,
+				encapsulation.second,
+				glue,
+				encapsulation.first,
+				src_iter.second,
+				encapsulation.second
+			)
+		);
+	}
+
+	return output;
+}
+
+template<typename T>
+inline std::string
+ImplodePair(const std::string &glue, const std::pair<char, char> &encapsulation, const std::vector<T> &src)
+{
+	if (src.empty()) {
+		return {};
+	}
+	std::ostringstream oss;
+	for (const T &src_iter: src) {
+		oss << encapsulation.first << src_iter << encapsulation.second << glue;
+	}
+	std::string output(oss.str());
+	output.resize(output.size() - glue.size());
+	return output;
+}
+
 bool BotDatabase::UpdateInjectedBotCommandSettings(const std::vector<std::pair<std::string, uint8>> &injected)
 {
 	if (injected.size()) {
 
 		query = fmt::format(
 			"REPLACE INTO `bot_command_settings`(`bot_command`, `access`) VALUES {}",
-			Strings::ImplodePair(
+			ImplodePair(
 				",",
 				std::pair<char, char>('(', ')'),
 				join_pair(",", std::pair<char, char>('\'', '\''), injected)
@@ -106,7 +155,7 @@ bool BotDatabase::UpdateOrphanedBotCommandSettings(const std::vector<std::string
 
 		query = fmt::format(
 			"DELETE FROM `bot_command_settings` WHERE `bot_command` IN ({})",
-			Strings::ImplodePair(",", std::pair<char, char>('\'', '\''), orphaned)
+			ImplodePair(",", std::pair<char, char>('\'', '\''), orphaned)
 		);
 
 		if (!database.QueryDatabase(query).Success()) {
@@ -181,7 +230,7 @@ bool BotDatabase::LoadBotSpellCastingChances()
 	return true;
 }
 
-bool BotDatabase::QueryNameAvailablity(const std::string& bot_name, bool& available_flag)
+bool BotDatabase::QueryNameAvailability(const std::string& bot_name, bool& available_flag)
 {
 	if (
 		bot_name.empty() ||
@@ -206,7 +255,7 @@ bool BotDatabase::QueryBotCount(const uint32 owner_id, int class_id, uint32& bot
 	bot_count = BotDataRepository::Count(
 		database,
 		fmt::format(
-			"`owner_id` = {}",
+			"`owner_id` = {} AND `name` NOT LIKE '%-deleted-%'",
 			owner_id
 		)
 	);
@@ -215,7 +264,7 @@ bool BotDatabase::QueryBotCount(const uint32 owner_id, int class_id, uint32& bot
 		bot_class_count = BotDataRepository::Count(
 			database,
 			fmt::format(
-				"`owner_id` = {} AND `class` = {}",
+				"`owner_id` = {} AND `class` = {} AND `name` NOT LIKE '%-deleted-%'",
 				owner_id,
 				class_id
 			)
@@ -247,7 +296,7 @@ bool BotDatabase::LoadBotsList(const uint32 owner_id, std::list<BotsAvailableLis
 							SELECT `account_id` FROM `character_data` WHERE `id` = {}
 						)
 					)
-					AND 
+					AND
 					`name` NOT LIKE '%-deleted-%'
 				),
 				owner_id
@@ -2225,7 +2274,7 @@ bool BotDatabase::LoadBotSettings(Mob* m)
 	else {
 		query = fmt::format("`bot_id` = {} AND `stance` = {}", mob_id, stance_id);
 	}
-	
+
 	if (stance_id == Stance::Passive) {
 		LogBotSettings("{} is currently set to {} [#{}]. No saving or loading required.", m->GetCleanName(), Stance::GetName(Stance::Passive), Stance::Passive);
 		return true;
@@ -2277,7 +2326,7 @@ bool BotDatabase::SaveBotSettings(Mob* m)
 	if (!m->IsOfClientBot()) {
 		return false;
 	}
-	
+
 	uint32 bot_id = (m->IsBot() ? m->CastToBot()->GetBotID() : 0);
 	uint32 character_id = (m->IsClient() ? m->CastToClient()->CharacterID() : 0);
 	uint8 stance_id = (m->IsBot() ? m->CastToBot()->GetBotStance() : 0);
@@ -2288,10 +2337,10 @@ bool BotDatabase::SaveBotSettings(Mob* m)
 	}
 
 	std::string query = "";
-	
+
 	if (m->IsClient()) {
 		query = fmt::format("`character_id` = {} AND `stance` = {}", character_id, stance_id);
-	} 
+	}
 	else {
 		query = fmt::format("`bot_id` = {} AND `stance` = {}", bot_id, stance_id);
 	}
@@ -2520,4 +2569,209 @@ bool BotDatabase::DeleteBotBlockedBuffs(const uint32 bot_id)
 	);
 
 	return true;
+}
+
+void BotDatabase::CheckBotSpells() {
+	auto spell_list = BotSpellsEntriesRepository::All(content_db);
+	uint16 spell_id;
+	SPDat_Spell_Struct spell;
+
+	for (const auto& s : spell_list) {
+		if (!IsValidSpell(s.spell_id)) {
+			LogBotSpellTypeChecks("{} is an invalid spell", s.spell_id);
+			continue;
+		}
+
+		spell = spells[s.spell_id];
+		spell_id = spell.id;
+
+		if (spell.classes[s.npc_spells_id - (BOT_CLASS_BASE_ID_PREFIX + 1)] >= 255) {
+			LogBotSpellTypeChecks("{} [#{}] is not usable by a {} [#{}].", GetSpellName(spell_id), spell_id, GetClassIDName(s.npc_spells_id - BOT_CLASS_BASE_ID_PREFIX), s.npc_spells_id);
+		}
+		else {
+			if (spell.classes[s.npc_spells_id - (BOT_CLASS_BASE_ID_PREFIX + 1)] > s.minlevel) {
+				LogBotSpellTypeChecks("{} [#{}] is not usable until level {} for a {} [#{}] and the min level is currently set to {}.",
+					GetSpellName(spell_id),
+					spell_id,
+					spell.classes[s.npc_spells_id - (BOT_CLASS_BASE_ID_PREFIX + 1)],
+					GetClassIDName(s.npc_spells_id - BOT_CLASS_BASE_ID_PREFIX),
+					s.npc_spells_id,
+					s.minlevel
+				);
+
+				LogBotSpellTypeChecksDetail("UPDATE bot_spells_entries SET `minlevel` = {} WHERE `spellid` = {} AND `npc_spells_id` = {}; -- {} [#{}] from minlevel {} to {} for {} [#{}]",
+					spell.classes[s.npc_spells_id - (BOT_CLASS_BASE_ID_PREFIX + 1)],
+					spell_id,
+					s.npc_spells_id,
+					GetSpellName(spell_id),
+					spell_id,
+					s.minlevel,
+					spell.classes[s.npc_spells_id - (BOT_CLASS_BASE_ID_PREFIX + 1)],
+					GetClassIDName(s.npc_spells_id - BOT_CLASS_BASE_ID_PREFIX),
+					s.npc_spells_id
+				);
+			}
+
+			if (spell.classes[s.npc_spells_id - (BOT_CLASS_BASE_ID_PREFIX + 1)] < s.minlevel) {
+				LogBotSpellTypeChecks("{} [#{}] could be used starting at level {} for a {} [#{}] instead of the current min level of {}.",
+					GetSpellName(spell_id),
+					spell_id,
+					spell.classes[s.npc_spells_id - (BOT_CLASS_BASE_ID_PREFIX + 1)],
+					GetClassIDName(s.npc_spells_id - BOT_CLASS_BASE_ID_PREFIX),
+					s.npc_spells_id,
+					s.minlevel
+				);
+
+				LogBotSpellTypeChecksDetail("UPDATE bot_spells_entries SET `minlevel` = {} WHERE `spellid` = {} AND `npc_spells_id` = {}; -- {} [#{}] from minlevel {} to {} for {} [#{}]",
+					spell.classes[s.npc_spells_id - (BOT_CLASS_BASE_ID_PREFIX + 1)],
+					spell_id,
+					s.npc_spells_id,
+					GetSpellName(spell_id),
+					spell_id,
+					s.minlevel,
+					spell.classes[s.npc_spells_id - (BOT_CLASS_BASE_ID_PREFIX + 1)],
+					GetClassIDName(s.npc_spells_id - BOT_CLASS_BASE_ID_PREFIX),
+					s.npc_spells_id
+				);
+			}
+
+
+			if (spell.classes[s.npc_spells_id - (BOT_CLASS_BASE_ID_PREFIX + 1)] > s.maxlevel) {
+				LogBotSpellTypeChecks("{} [#{}] is not usable until level {} for a {} [#{}] and the max level is currently set to {}.",
+					GetSpellName(spell_id),
+					spell_id,
+					spell.classes[s.npc_spells_id - (BOT_CLASS_BASE_ID_PREFIX + 1)],
+					GetClassIDName(s.npc_spells_id - BOT_CLASS_BASE_ID_PREFIX),
+					s.npc_spells_id,
+					s.maxlevel
+				);
+			}
+		}
+
+		uint16 correct_type = GetCorrectBotSpellType(s.type, spell_id);
+
+		if (RuleB(Bots, UseParentSpellTypeForChecks)) {
+			uint16 parent_type = Bot::GetParentSpellType(correct_type);
+
+			if (s.type == parent_type || s.type == correct_type) {
+				continue;
+			}
+
+			if (correct_type != parent_type) {
+				correct_type = parent_type;
+			}
+		}
+		else {
+			if (IsPetBotSpellType(s.type)) {
+				correct_type = GetPetBotSpellType(correct_type);
+			}
+		}
+
+		if (IsPetBotSpellType(correct_type) && (spell.target_type != ST_Pet && spell.target_type != ST_SummonedPet)) {
+			correct_type = Bot::GetParentSpellType(correct_type);
+		}
+
+		if (correct_type == s.type) {
+			continue;
+		}
+
+		if (correct_type == UINT16_MAX) {
+				LogBotSpellTypeChecks(
+					"{} [#{}] is incorrect. It is currently set as {} [#{}] but the correct type is unknown.",
+					GetSpellName(spell_id),
+					spell_id,
+					Bot::GetSpellTypeNameByID(s.type),
+					s.type
+				);
+		}
+		else {
+			LogBotSpellTypeChecks("{} [#{}] is incorrect. It is currently set as {} [#{}] and should be {} [#{}]",
+				GetSpellName(spell_id),
+				spell_id,
+				Bot::GetSpellTypeNameByID(s.type),
+				s.type,
+				Bot::GetSpellTypeNameByID(correct_type),
+				correct_type
+			);
+			LogBotSpellTypeChecksDetail("UPDATE bot_spells_entries SET `type` = {} WHERE `spell_id` = {}; -- {} [#{}] from {} [#{}] to {} [#{}]",
+				correct_type,
+				spell_id,
+				GetSpellName(spell_id),
+				spell_id,
+				Bot::GetSpellTypeNameByID(s.type),
+				s.type,
+				Bot::GetSpellTypeNameByID(correct_type),
+				correct_type
+			);
+		}
+	}
+}
+
+void BotDatabase::MapCommandedSpellTypeMinLevels() {
+	commanded_spell_type_min_levels.clear();
+
+	auto start = std::min({ BotSpellTypes::START, BotSpellTypes::COMMANDED_START, BotSpellTypes::DISCIPLINE_START });
+	auto end = std::max({ BotSpellTypes::END, BotSpellTypes::COMMANDED_END, BotSpellTypes::DISCIPLINE_END });
+
+	for (int i = start; i <= end; ++i) {
+		if (!Bot::IsValidBotSpellType(i)) {
+			continue;
+		}
+
+		for (int x = Class::Warrior; x <= Class::Berserker; ++x) {
+			commanded_spell_type_min_levels[i][x] = {UINT8_MAX, "" };
+		}
+	}
+
+	auto spell_list = BotSpellsEntriesRepository::All(content_db);
+
+	for (const auto& s : spell_list) {
+		if (!IsValidSpell(s.spell_id)) {
+			LogBotSpellTypeChecks("{} is an invalid spell", s.spell_id);
+			continue;
+		}
+
+		auto spell = spells[s.spell_id];
+
+		if (spell.target_type == ST_Self) {
+			continue;
+		}
+
+		int32_t bot_class = s.npc_spells_id - BOT_CLASS_BASE_ID_PREFIX;
+
+		if (
+			!EQ::ValueWithin(bot_class, Class::Warrior, Class::Berserker) ||
+			!Bot::IsValidBotSpellType(s.type)
+		) {
+			continue;
+		}
+
+		for (int i = start; i <= end; ++i) {
+			if (s.minlevel > commanded_spell_type_min_levels[i][bot_class].min_level) {
+				continue;
+			}
+
+			if (
+				i > BotSpellTypes::PARENT_TYPE_END &&
+				i != s.type &&
+				Bot::GetParentSpellType(i) != s.type
+			) {
+				continue;
+			}
+
+			if (!Bot::IsValidSpellTypeBySpellID(i, s.spell_id)) {
+				continue;
+			}
+
+			if (s.minlevel < commanded_spell_type_min_levels[i][bot_class].min_level) {
+				commanded_spell_type_min_levels[i][bot_class].min_level   = s.minlevel;
+				commanded_spell_type_min_levels[i][bot_class].description = StringFormat(
+					"%s [#%u] - Level %u",
+					GetClassIDName(bot_class),
+					bot_class,
+					s.minlevel
+				);
+			}
+		}
+	}
 }

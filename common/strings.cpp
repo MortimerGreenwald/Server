@@ -34,6 +34,7 @@
 */
 
 #include "strings.h"
+#include <cereal/external/rapidjson/document.h>
 #include <fmt/format.h>
 #include <algorithm>
 #include <cctype>
@@ -41,6 +42,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <iostream>
+#include <sstream>
 
 #include <random>
 #include <string>
@@ -48,6 +50,12 @@
 //Const char based
 #include "strings_legacy.cpp" // legacy c functions
 #include "strings_misc.cpp" // anything non "Strings" scoped
+
+#ifdef _WINDOWS
+#include <ctype.h>
+#include <functional>
+#include <algorithm>
+#endif
 
 std::string Strings::Random(size_t length)
 {
@@ -304,6 +312,12 @@ std::string Strings::Commify(const std::string &number)
 	std::string temp_string;
 
 	auto string_length = static_cast<int>(number.length());
+
+	if (string_length == 3) {
+		return number;
+	} else if (string_length == 4 && number.starts_with("-")) {
+		return number;
+	}
 
 	int i = 0;
 	for (i = string_length - 3; i >= 0; i -= 3) {
@@ -700,6 +714,18 @@ std::string &Strings::Trim(std::string &str, const std::string &chars)
 {
 	return LTrim(RTrim(str, chars), chars);
 }
+
+const std::string NUM_TO_ENGLISH_X[] = {
+	"", "One ", "Two ", "Three ", "Four ",
+	"Five ", "Six ", "Seven ", "Eight ", "Nine ", "Ten ", "Eleven ",
+	"Twelve ", "Thirteen ", "Fourteen ", "Fifteen ",
+	"Sixteen ", "Seventeen ", "Eighteen ", "Nineteen "
+};
+
+const std::string NUM_TO_ENGLISH_Y[] = {
+	"", "", "Twenty ", "Thirty ", "Forty ",
+	"Fifty ", "Sixty ", "Seventy ", "Eighty ", "Ninety "
+};
 
 // Function to convert single digit or two digit number into words
 std::string Strings::ConvertToDigit(int n, const std::string& suffix)

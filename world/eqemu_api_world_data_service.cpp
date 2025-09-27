@@ -13,16 +13,16 @@
 #include "ucs.h"
 #include "queryserv.h"
 
-extern ZSList            zoneserver_list;
-extern ClientList        client_list;
 extern WorldGuildManager guild_mgr;
-extern UCSConnection UCSLink;
-extern QueryServConnection QSLink;
 
 void callGetZoneList(Json::Value &response)
 {
-	for (auto &zone: zoneserver_list.getZoneServerList()) {
+	for (auto &zone: ZSList::Instance()->getZoneServerList()) {
 		Json::Value row;
+
+		if (!zone) {
+			continue;
+		}
 
 		if (!zone->IsConnected()) {
 			continue;
@@ -32,6 +32,8 @@ void callGetZoneList(Json::Value &response)
 		row["client_address"]       = zone->GetCAddress();
 		row["client_local_address"] = zone->GetCLocalAddress();
 		row["client_port"]          = zone->GetCPort();
+		row["compile_version"]      = zone->GetCurrentVersion();
+		row["compile_date"]         = zone->GetCompileDate();
 		row["compile_time"]         = zone->GetCompileTime();
 		row["id"]                   = zone->GetID();
 		row["instance_id"]          = zone->GetInstanceID();
@@ -109,9 +111,17 @@ void callGetDatabaseSchema(Json::Value &response)
 	response.append(schema);
 }
 
-void callGetClientList(Json::Value &response)
+void callGetClientList(Json::Value &response, const std::vector<std::string> &args)
 {
-	client_list.GetClientList(response);
+	// if args has "full"
+	bool full_list = false;
+	if (args.size() > 1) {
+		if (args[1] == "full") {
+			full_list = true;
+		}
+	}
+
+	ClientList::Instance()->GetClientList(response, full_list);
 }
 
 void getReloadTypes(Json::Value &response)
@@ -123,6 +133,12 @@ void getReloadTypes(Json::Value &response)
 		v["description"] = ServerReload::GetName(t);
 		response.append(v);
 	}
+}
+
+void getServerCounts(Json::Value &response, const std::vector<std::string> &args)
+{
+	response["zone_count"]   = ZSList::Instance()->GetServerListCount();
+	response["client_count"] = ClientList::Instance()->GetClientCount();
 }
 
 void EQEmuApiWorldDataService::reload(Json::Value &r, const std::vector<std::string> &args)
@@ -146,7 +162,8 @@ void EQEmuApiWorldDataService::reload(Json::Value &r, const std::vector<std::str
 	for (auto &t: ServerReload::GetTypes()) {
 		if (std::to_string(t) == command || Strings::ToLower(ServerReload::GetName(t)) == command) {
 			message(r, fmt::format("Reloading [{}] globally", ServerReload::GetName(t)));
-			zoneserver_list.SendServerReload(t, nullptr);
+			LogInfo("Queueing reload of type [{}] to zones", ServerReload::GetName(t));
+			ZSList::Instance()->QueueServerReload(t);
 		}
 		found_command = true;
 	}
@@ -172,7 +189,7 @@ void EQEmuApiWorldDataService::get(Json::Value &r, const std::vector<std::string
 		callGetDatabaseSchema(r);
 	}
 	if (m == "get_client_list") {
-		callGetClientList(r);
+		callGetClientList(r, args);
 	}
 	if (m == "get_reload_types") {
 		getReloadTypes(r);
@@ -183,6 +200,9 @@ void EQEmuApiWorldDataService::get(Json::Value &r, const std::vector<std::string
 	if (m == "get_guild_details") {
 		callGetGuildDetails(r, args);
 	}
+	if (m == "get_server_counts") {
+		getServerCounts(r, args);
+	}
 	if (m == "lock_status") {
 		r["locked"] = WorldConfig::get()->Locked;
 	}
@@ -190,7 +210,6 @@ void EQEmuApiWorldDataService::get(Json::Value &r, const std::vector<std::string
 
 void EQEmuApiWorldDataService::callGetGuildDetails(Json::Value &response, const std::vector<std::string> &args)
 {
-
 	std::string command = !args[1].empty() ? args[1] : "";
 	if (command.empty()) {
 		return;
@@ -236,7 +255,7 @@ void EQEmuApiWorldDataService::callGetGuildDetails(Json::Value &response, const 
 	row["tribute"]["time_remaining"] = guild->tribute.time_remaining;
 	row["tribute"]["enabled"]        = guild->tribute.enabled;
 
-	client_list.GetGuildClientList(response, guild_id);
+	ClientList::Instance()->GetGuildClientList(response, guild_id);
 
 	response.append(row);
 }

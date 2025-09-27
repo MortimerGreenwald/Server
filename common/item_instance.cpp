@@ -574,7 +574,7 @@ EQ::ItemInstance* EQ::ItemInstance::GetOrnamentationAugment() const
 uint32 EQ::ItemInstance::GetOrnamentHeroModel(int32 material_slot) const
 {
 	// Not a Hero Forge item.
-	if (m_ornament_hero_model == 0 || material_slot < 0) {
+	if (m_ornament_hero_model == 0) {
 		return 0;
 	}
 
@@ -906,24 +906,32 @@ bool EQ::ItemInstance::IsSlotAllowed(int16 slot_id) const {
 
 bool EQ::ItemInstance::IsDroppable(bool recurse) const
 {
-	if (!m_item)
+	if (!m_item) {
 		return false;
+	}
 	/*if (m_ornamentidfile) // not implemented
 		return false;*/
-	if (m_attuned)
+	if (m_attuned) {
 		return false;
-	/*if (m_item->FVNoDrop != 0) // not implemented
-		return false;*/
-	if (m_item->NoDrop == 0)
+	}
+
+	if (RuleI(World, FVNoDropFlag) == FVNoDropFlagRule::Enabled && m_item->FVNoDrop == 0) {
+		return true;
+	}
+
+	if (m_item->NoDrop == 0) {
 		return false;
+	}
 
 	if (recurse) {
-		for (auto iter : m_contents) {
-			if (!iter.second)
+		for (auto iter: m_contents) {
+			if (!iter.second) {
 				continue;
+			}
 
-			if (!iter.second->IsDroppable(recurse))
+			if (!iter.second->IsDroppable(recurse)) {
 				return false;
+			}
 		}
 	}
 
@@ -1791,7 +1799,7 @@ std::vector<std::string> EQ::ItemInstance::GetAugmentNames() const
 
 	for (uint8 slot_id = invaug::SOCKET_BEGIN; slot_id <= invaug::SOCKET_END; slot_id++) {
 		const auto augment = GetAugment(slot_id);
-		augment_names.push_back(augment ? augment->GetItem()->Name : "None");
+		augment_names.push_back(augment ? augment->GetItem()->Name : "");
 	}
 
 	return augment_names;

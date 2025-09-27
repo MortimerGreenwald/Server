@@ -3131,7 +3131,7 @@ bool Lua_Client::IsAutoFireEnabled()
 
 bool Lua_Client::ReloadDataBuckets() {
 	Lua_Safe_Call_Bool();
-	return DataBucket::GetDataBuckets(self);
+	return self->LoadDataBucketsCache();
 }
 
 uint32 Lua_Client::GetEXPForLevel(uint16 check_level)
@@ -3496,6 +3496,24 @@ std::string Lua_Client::GetAccountBucketRemaining(std::string bucket_name)
 	return self->GetAccountBucketRemaining(bucket_name);
 }
 
+void Lua_Client::GrantNameChange()
+{
+	Lua_Safe_Call_Void();
+	self->GrantNameChange();
+}
+
+bool Lua_Client::IsNameChangeAllowed()
+{
+	Lua_Safe_Call_Bool();
+	return self->IsNameChangeAllowed();
+}
+
+bool Lua_Client::ClearNameChange()
+{
+	Lua_Safe_Call_Bool();
+	return self->ClearNameChange();
+}
+
 std::string Lua_Client::GetBandolierName(uint8 bandolier_slot)
 {
 	Lua_Safe_Call_String();
@@ -3557,13 +3575,53 @@ bool Lua_Client::KeyRingClear()
 void Lua_Client::KeyRingList()
 {
 	Lua_Safe_Call_Void();
-	self->KeyRingList();
+	self->KeyRingList(self);
+}
+
+void Lua_Client::KeyRingList(Lua_Client c)
+{
+	Lua_Safe_Call_Void();
+	self->KeyRingList(self);
 }
 
 bool Lua_Client::KeyRingRemove(uint32 item_id)
 {
 	Lua_Safe_Call_Bool();
 	return self->KeyRingRemove(item_id);
+}
+
+
+bool Lua_Client::CompleteTask(int task_id)
+{
+	Lua_Safe_Call_Bool();
+	return self->CompleteTask(task_id);
+}
+
+bool Lua_Client::UncompleteTask(int task_id)
+{
+	Lua_Safe_Call_Bool();
+	return self->UncompleteTask(task_id);
+}
+
+void Lua_Client::EnableTitleSet(uint32 title_set) {
+	Lua_Safe_Call_Void();
+	self->EnableTitle(title_set);
+}
+
+luabind::object Lua_Client::GetKeyRing(lua_State* L)
+{
+	auto lua_table = luabind::newtable(L);
+
+	if (d_) {
+		auto self  = reinterpret_cast<NativeType *>(d_);
+		int  index = 1;
+		for (const uint32& item_id: self->GetKeyRing()) {
+			lua_table[index] = item_id;
+			index++;
+		}
+	}
+
+	return lua_table;
 }
 
 luabind::scope lua_register_client() {
@@ -3635,6 +3693,7 @@ luabind::scope lua_register_client() {
 	.def("CashReward", &Lua_Client::CashReward)
 	.def("ChangeLastName", (void(Lua_Client::*)(std::string))&Lua_Client::ChangeLastName)
 	.def("GrantPetNameChange", &Lua_Client::GrantPetNameChange)
+	.def("ClearNameChange", &Lua_Client::ClearNameChange)
 	.def("CharacterID", (uint32(Lua_Client::*)(void))&Lua_Client::CharacterID)
 	.def("CheckIncreaseSkill", (void(Lua_Client::*)(int,Lua_Mob))&Lua_Client::CheckIncreaseSkill)
 	.def("CheckIncreaseSkill", (void(Lua_Client::*)(int,Lua_Mob,int))&Lua_Client::CheckIncreaseSkill)
@@ -3644,6 +3703,7 @@ luabind::scope lua_register_client() {
 	.def("ClearPEQZoneFlag", (void(Lua_Client::*)(uint32))&Lua_Client::ClearPEQZoneFlag)
 	.def("ClearXTargets", (void(Lua_Client::*)(void))&Lua_Client::ClearXTargets)
 	.def("ClearZoneFlag", (void(Lua_Client::*)(uint32))&Lua_Client::ClearZoneFlag)
+	.def("CompleteTask", (bool(Lua_Client::*)(int))&Lua_Client::CompleteTask)
 	.def("Connected", (bool(Lua_Client::*)(void))&Lua_Client::Connected)
 	.def("CountAugmentEquippedByID", (uint32(Lua_Client::*)(uint32))&Lua_Client::CountAugmentEquippedByID)
 	.def("CountItem", (uint32(Lua_Client::*)(uint32))&Lua_Client::CountItem)
@@ -3674,6 +3734,7 @@ luabind::scope lua_register_client() {
 	.def("EnableAreaHPRegen", &Lua_Client::EnableAreaHPRegen)
 	.def("EnableAreaManaRegen", &Lua_Client::EnableAreaManaRegen)
 	.def("EnableAreaRegens", &Lua_Client::EnableAreaRegens)
+	.def("EnableTitleSet", &Lua_Client::EnableTitleSet)
 	.def("EndSharedTask", (void(Lua_Client::*)(void))&Lua_Client::EndSharedTask)
 	.def("EndSharedTask", (void(Lua_Client::*)(bool))&Lua_Client::EndSharedTask)
 	.def("Escape", (void(Lua_Client::*)(void))&Lua_Client::Escape)
@@ -3793,6 +3854,7 @@ luabind::scope lua_register_client() {
 	.def("GetInvulnerableEnvironmentDamage", (bool(Lua_Client::*)(void))&Lua_Client::GetInvulnerableEnvironmentDamage)
 	.def("GetItemIDAt", (int(Lua_Client::*)(int))&Lua_Client::GetItemIDAt)
 	.def("GetItemCooldown", (uint32(Lua_Client::*)(uint32))&Lua_Client::GetItemCooldown)
+	.def("GetKeyRing", (luabind::object(Lua_Client::*)(lua_State* L))&Lua_Client::GetKeyRing)
 	.def("GetLDoNLosses", (int(Lua_Client::*)(void))&Lua_Client::GetLDoNLosses)
 	.def("GetLDoNLossesTheme", (int(Lua_Client::*)(int))&Lua_Client::GetLDoNLossesTheme)
 	.def("GetLDoNPointsTheme", (int(Lua_Client::*)(int))&Lua_Client::GetLDoNPointsTheme)
@@ -3851,6 +3913,7 @@ luabind::scope lua_register_client() {
 	.def("GrantAllAAPoints", (void(Lua_Client::*)(uint8,bool))&Lua_Client::GrantAllAAPoints)
 	.def("GrantAlternateAdvancementAbility", (bool(Lua_Client::*)(int, int))&Lua_Client::GrantAlternateAdvancementAbility)
 	.def("GrantAlternateAdvancementAbility", (bool(Lua_Client::*)(int, int, bool))&Lua_Client::GrantAlternateAdvancementAbility)
+	.def("GrantNameChange", &Lua_Client::GrantNameChange)
 	.def("GuildID", (uint32(Lua_Client::*)(void))&Lua_Client::GuildID)
 	.def("GuildRank", (int(Lua_Client::*)(void))&Lua_Client::GuildRank)
 	.def("HasAugmentEquippedByID", (bool(Lua_Client::*)(uint32))&Lua_Client::HasAugmentEquippedByID)
@@ -3881,6 +3944,7 @@ luabind::scope lua_register_client() {
 	.def("IsInAGuild", (bool(Lua_Client::*)(void))&Lua_Client::IsInAGuild)
 	.def("IsLD", (bool(Lua_Client::*)(void))&Lua_Client::IsLD)
 	.def("IsMedding", (bool(Lua_Client::*)(void))&Lua_Client::IsMedding)
+	.def("IsNameChangeAllowed", &Lua_Client::IsNameChangeAllowed)
 	.def("IsRaidGrouped", (bool(Lua_Client::*)(void))&Lua_Client::IsRaidGrouped)
 	.def("IsSitting", (bool(Lua_Client::*)(void))&Lua_Client::IsSitting)
 	.def("IsStanding", (bool(Lua_Client::*)(void))&Lua_Client::IsStanding)
@@ -3891,6 +3955,7 @@ luabind::scope lua_register_client() {
 	.def("KeyRingCheck", (bool(Lua_Client::*)(uint32))&Lua_Client::KeyRingCheck)
 	.def("KeyRingClear", (bool(Lua_Client::*)(void))&Lua_Client::KeyRingClear)
 	.def("KeyRingList", (void(Lua_Client::*)(void))&Lua_Client::KeyRingList)
+	.def("KeyRingList", (void(Lua_Client::*)(Lua_Client))&Lua_Client::KeyRingList)
 	.def("KeyRingRemove", (bool(Lua_Client::*)(uint32))&Lua_Client::KeyRingRemove)
 	.def("Kick", (void(Lua_Client::*)(void))&Lua_Client::Kick)
 	.def("LearnDisciplines", (uint16(Lua_Client::*)(uint8,uint8))&Lua_Client::LearnDisciplines)
@@ -4135,6 +4200,7 @@ luabind::scope lua_register_client() {
 	.def("TrainDisc", (void(Lua_Client::*)(int))&Lua_Client::TrainDisc)
 	.def("TrainDiscBySpellID", (void(Lua_Client::*)(int32))&Lua_Client::TrainDiscBySpellID)
 	.def("UnFreeze", (void(Lua_Client::*)(void))&Lua_Client::UnFreeze)
+	.def("UncompleteTask", (bool(Lua_Client::*)(int))&Lua_Client::UncompleteTask)
 	.def("Undye", (void(Lua_Client::*)(void))&Lua_Client::Undye)
 	.def("UnmemSpell", (void(Lua_Client::*)(int))&Lua_Client::UnmemSpell)
 	.def("UnmemSpell", (void(Lua_Client::*)(int,bool))&Lua_Client::UnmemSpell)

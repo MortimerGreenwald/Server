@@ -196,6 +196,7 @@
 #define ServerOP_DzSaveInvite                 0x0466
 #define ServerOP_DzRequestInvite              0x0467
 #define ServerOP_DzMakeLeader                 0x0468
+#define ServerOP_DzGetBulkMemberStatuses      0x0469
 
 #define ServerOP_LSInfo				0x1000
 #define ServerOP_LSStatus			0x1001
@@ -272,8 +273,9 @@
 #define ServerOP_WWTaskUpdate 0x4758
 
 // player events
-#define ServerOP_QSSendQuery		0x5000
+#define ServerOP_QSSendQuery 0x5000
 #define ServerOP_PlayerEvent 0x5100
+#define ServerOP_SendPlayerEventSettings 0x5101
 
 enum {
 	CZUpdateType_Character,
@@ -1555,6 +1557,13 @@ struct ServerDzMemberStatuses_Struct {
 	ServerDzMemberStatusEntry_Struct entries[0];
 };
 
+struct ServerDzCerealData_Struct {
+	uint16_t zone_id;
+	uint16_t inst_id;
+	uint32_t cereal_size;
+	char     cereal_data[1];
+};
+
 struct ServerDzMovePC_Struct {
 	uint32 dz_id;
 	uint16 sender_zone_id;
@@ -1769,6 +1778,7 @@ struct BazaarPurchaseMessaging_Struct {
 	uint32           item_quantity_available;
 	uint32           id;
 };
+
 
 #pragma pack()
 

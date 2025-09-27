@@ -1,8 +1,8 @@
 #include "../../common/http/httplib.h"
 #include "../../common/eqemu_logsys.h"
 #include "../../common/platform.h"
-#include "../zone.h"
-#include "../client.h"
+#include "../../zone.h"
+#include "../../client.h"
 #include "../../common/net/eqstream.h"
 #include "../../common/json/json.hpp"
 
@@ -36,19 +36,6 @@ struct TestCase {
 	bool        handin_check_result;
 };
 
-void RunTest(const std::string &test_name, bool expected, bool actual)
-{
-	if (expected == actual) {
-		std::cout << "[✅] " << test_name << " PASSED\n";
-	}
-	else {
-		std::cerr << "[❌] " << test_name << " FAILED\n";
-		std::cerr << "   📌 Expected: " << (expected ? "true" : "false") << "\n";
-		std::cerr << "   ❌ Got:      " << (actual ? "true" : "false") << "\n";
-		std::exit(1);
-	}
-}
-
 void RunSerializedTest(const std::string &test_name, const std::string &expected, const std::string &actual)
 {
 	if (expected == actual) {
@@ -75,13 +62,13 @@ std::string SerializeHandin(const std::map<std::string, uint32> &items, const Ha
 	return j.dump();
 }
 
-void ZoneCLI::NpcHandins(int argc, char **argv, argh::parser &cmd, std::string &description)
+void ZoneCLI::TestNpcHandins(int argc, char **argv, argh::parser &cmd, std::string &description)
 {
 	if (cmd[{"-h", "--help"}]) {
 		return;
 	}
 
-	LogSys.SilenceConsoleLogging();
+	EQEmuLogSys::Instance()->SilenceConsoleLogging();
 
 	Zone::Bootup(ZoneID("qrg"), 0, false);
 	zone->StopShutdownTimer();
@@ -439,10 +426,10 @@ void ZoneCLI::NpcHandins(int argc, char **argv, argh::parser &cmd, std::string &
 		std::map<std::string, uint32>   required;
 		std::vector<EQ::ItemInstance *> items;
 
-		LogSys.EnableConsoleLogging();
+		EQEmuLogSys::Instance()->EnableConsoleLogging();
 
 		// turn this on to see debugging output
-		LogSys.log_settings[Logs::NpcHandin].log_to_console = std::getenv("DEBUG") ? 3 : 0;
+		EQEmuLogSys::Instance()->log_settings[Logs::NpcHandin].log_to_console = std::getenv("DEBUG") ? 3 : 0;
 
 		for (auto &test: test_cases) {
 			hand_ins.clear();
@@ -537,7 +524,7 @@ void ZoneCLI::NpcHandins(int argc, char **argv, argh::parser &cmd, std::string &
 
 			npc->ResetHandin();
 
-			if (LogSys.log_settings[Logs::NpcHandin].log_to_console > 0) {
+			if (EQEmuLogSys::Instance()->log_settings[Logs::NpcHandin].log_to_console > 0) {
 				std::cout << std::endl;
 			}
 		}

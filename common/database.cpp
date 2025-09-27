@@ -708,6 +708,20 @@ const std::string Database::GetNPCNameByID(uint32 npc_id)
 	return e.id ? e.name : std::string();
 }
 
+template<typename InputIterator, typename OutputIterator>
+inline auto CleanMobName(InputIterator first, InputIterator last, OutputIterator result)
+{
+	for (; first != last; ++first) {
+		if (*first == '_') {
+			*result = ' ';
+		}
+		else if (isalpha(*first) || *first == '`') {
+			*result = *first;
+		}
+	}
+	return result;
+}
+
 const std::string Database::GetCleanNPCNameByID(uint32 npc_id)
 {
 	const auto& e = NpcTypesRepository::FindOne(*this, npc_id);
@@ -955,6 +969,29 @@ bool Database::UpdateName(const std::string& old_name, const std::string& new_na
 	return CharacterDataRepository::UpdateOne(*this, e);
 }
 
+bool Database::UpdateNameByID(const int character_id, const std::string& new_name)
+{
+	LogInfo("Renaming [{}] to [{}]", character_id, new_name);
+
+	auto l = CharacterDataRepository::GetWhere(
+		*this,
+		fmt::format(
+			"`id` = {}",
+			character_id
+		)
+	);
+
+	if (l.empty()) {
+		return false;
+	}
+
+	auto& e = l.front();
+
+	e.name = new_name;
+
+	return CharacterDataRepository::UpdateOne(*this, e);
+}
+
 bool Database::IsNameUsed(const std::string& name)
 {
 	if (RuleB(Bots, Enabled)) {
@@ -980,6 +1017,20 @@ bool Database::IsNameUsed(const std::string& name)
 	);
 
 	return !character_data.empty();
+}
+
+// Players cannot have the same name as a pet vanity name, or memory corruption occurs.
+bool Database::IsPetNameUsed(const std::string& name)
+{
+	const auto& pet_name_data = CharacterPetNameRepository::GetWhere(
+		*this,
+		fmt::format(
+			"`name` = '{}'",
+			Strings::Escape(name)
+		)
+	);
+
+	return !pet_name_data.empty();
 }
 
 uint32 Database::GetServerType()
@@ -1058,13 +1109,13 @@ void Database::SetLFP(uint32 character_id, bool is_lfp)
 	CharacterDataRepository::UpdateOne(*this, e);
 }
 
-void Database::SetLoginFlags(uint32 character_id, bool is_lfp, bool is_lfg, uint8 first_logon)
+void Database::SetLoginFlags(uint32 character_id, bool is_lfp, bool is_lfg, uint8 ingame)
 {
 	auto e = CharacterDataRepository::FindOne(*this, character_id);
 
-	e.firstlogon = first_logon;
-	e.lfg        = is_lfg ? 1 : 0;
-	e.lfp        = is_lfp ? 1 : 0;
+	e.ingame = ingame;
+	e.lfg    = is_lfg ? 1 : 0;
+	e.lfp    = is_lfp ? 1 : 0;
 
 	CharacterDataRepository::UpdateOne(*this, e);
 }
@@ -1078,11 +1129,11 @@ void Database::SetLFG(uint32 character_id, bool is_lfg)
 	CharacterDataRepository::UpdateOne(*this, e);
 }
 
-void Database::SetFirstLogon(uint32 character_id, uint8 first_logon)
+void Database::SetIngame(uint32 character_id, uint8 ingame)
 {
 	auto e = CharacterDataRepository::FindOne(*this, character_id);
 
-	e.firstlogon = first_logon;
+	e.ingame = ingame;
 
 	CharacterDataRepository::UpdateOne(*this, e);
 }
@@ -1883,6 +1934,7 @@ bool Database::CopyCharacter(
 	std::vector<std::string> tables_to_zero_id = {
 		"keyring",
 		"data_buckets",
+		"character_evolving_items",
 		"character_instance_safereturns",
 		"character_expedition_lockouts",
 		"character_instance_lockouts",
@@ -1914,6 +1966,12 @@ bool Database::CopyCharacter(
 			)
 		);
 
+		if (!results.Success()) {
+			LogError("Transaction failed [{}] rolling back", results.ErrorMessage());
+			TransactionRollback();
+			return false;
+		}
+
 		std::vector<std::string> columns      = {};
 		int                      column_count = 0;
 
@@ -1931,6 +1989,12 @@ bool Database::CopyCharacter(
 				source_character_id
 			)
 		);
+
+		if (!results.Success()) {
+			LogError("Transaction failed [{}] rolling back", results.ErrorMessage());
+			TransactionRollback();
+			return false;
+		}
 
 		std::vector<std::vector<std::string>> new_rows;
 
@@ -1999,13 +2063,18 @@ bool Database::CopyCharacter(
 			LogInfo("Copying table [{}] rows [{}]", table_name, Strings::Commify(rows_copied));
 
 			if (!insert.ErrorMessage().empty()) {
+				LogError("Error copying table [{}] [{}]", table_name, insert.ErrorMessage());
 				TransactionRollback();
 				return false;
 			}
 		}
 	}
 
-	TransactionCommit();
+	auto r = TransactionCommit();
+	if (!r.Success()) {
+		LogError("Transaction failed [{}] rolling back", r.ErrorMessage());
+		return false;
+	}
 
 	LogInfo(
 		"Character [{}] copied to [{}] total rows [{}]",
@@ -2175,7 +2244,7 @@ void Database::PurgeCharacterParcels()
 		pel.event_data = ss.str();
 		pel.created_at = std::time(nullptr);
 
-		player_event_logs.AddToQueue(pel);
+		PlayerEventLogs::Instance()->AddToQueue(pel);
 
 		ss.str("");
 		ss.clear();

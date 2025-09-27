@@ -58,9 +58,10 @@ void Client::SendBulkParcels()
 				p.second.aug_slot_6
 			));
 			if (inst) {
-				inst->SetCharges(p.second.quantity > 0 ? p.second.quantity : 1);
+				inst->SetCharges(p.second.quantity);
 				inst->SetMerchantCount(1);
 				inst->SetMerchantSlot(p.second.slot_id);
+				inst->SetEvolveCurrentAmount(p.second.evolve_amount);
 				if (inst->IsStackable()) {
 					inst->SetCharges(p.second.quantity);
 				}
@@ -161,9 +162,10 @@ void Client::SendParcel(Parcel_Struct &parcel_in)
 			p.aug_slot_6
 		));
 		if (inst) {
-			inst->SetCharges(p.quantity > 0 ? p.quantity : 1);
+			inst->SetCharges(p.quantity);
 			inst->SetMerchantCount(1);
 			inst->SetMerchantSlot(p.slot_id);
+			inst->SetEvolveCurrentAmount(p.evolve_amount);
 			if (inst->IsStackable()) {
 				inst->SetCharges(p.quantity);
 			}
@@ -272,6 +274,10 @@ void Client::SendParcelStatus()
 
 void Client::DoParcelSend(const Parcel_Struct *parcel_in)
 {
+	if (IsCasting()) {
+		StopCasting();
+	}
+
 	auto send_to_client = CharacterParcelsRepository::GetParcelCountAndCharacterName(database, parcel_in->send_to);
 	auto merchant       = entity_list.GetMob(parcel_in->npc_id);
 	if (!merchant) {
@@ -377,23 +383,23 @@ void Client::DoParcelSend(const Parcel_Struct *parcel_in)
 				return;
 			}
 
-			uint32 quantity{};
+			uint32 quantity = 1;
 			if (inst->IsStackable()) {
 				quantity = parcel_in->quantity;
-			}
-			else {
-				quantity = inst->GetCharges() > 0 ? inst->GetCharges() : parcel_in->quantity;
+			} else if (inst->GetItem()->MaxCharges > 0) {
+				quantity = inst->GetCharges();
 			}
 
 			CharacterParcelsRepository::CharacterParcels parcel_out{};
-			parcel_out.from_name = GetName();
-			parcel_out.note      = parcel_in->note;
-			parcel_out.sent_date = time(nullptr);
-			parcel_out.quantity  = quantity;
-			parcel_out.item_id   = inst->GetID();
-			parcel_out.char_id   = send_to_client.at(0).char_id;
-			parcel_out.slot_id   = next_slot;
-			parcel_out.id        = 0;
+			parcel_out.from_name     = GetName();
+			parcel_out.note          = parcel_in->note;
+			parcel_out.sent_date     = time(nullptr);
+			parcel_out.quantity      = quantity;
+			parcel_out.item_id       = inst->GetID();
+			parcel_out.char_id       = send_to_client.at(0).char_id;
+			parcel_out.slot_id       = next_slot;
+			parcel_out.evolve_amount = inst->GetEvolveCurrentAmount();
+			parcel_out.id            = 0;
 
 			if (inst->IsAugmented()) {
 				auto augs			  = inst->GetAugmentIDs();
@@ -403,6 +409,13 @@ void Client::DoParcelSend(const Parcel_Struct *parcel_in)
 				parcel_out.aug_slot_4 = augs.at(3);
 				parcel_out.aug_slot_5 = augs.at(4);
 				parcel_out.aug_slot_6 = augs.at(5);
+			}
+
+			if (!inst->IsDroppable(true)) {
+				Message(Chat::Yellow, "Unable to send a parcel that is NO-DROP or contains a NO-DROP item.");
+				SendParcelAck();
+				DoParcelCancel();
+				return;
 			}
 
 			auto result = CharacterParcelsRepository::InsertOne(database, parcel_out);
@@ -434,13 +447,15 @@ void Client::DoParcelSend(const Parcel_Struct *parcel_in)
 						cpc.aug_slot_5 = augs.at(4);
 						cpc.aug_slot_6 = augs.at(5);
 					}
-					cpc.quantity   = kv.second->GetCharges() > 0 ? kv.second->GetCharges() : 1;
+
+					cpc.quantity      = kv.second->GetCharges() >= 0 ? kv.second->GetCharges() : 1;
+					cpc.evolve_amount = kv.second->GetEvolveCurrentAmount();
 					all_entries.push_back(cpc);
 				}
 				CharacterParcelsContainersRepository::InsertMany(database, all_entries);
 			}
 
-			RemoveItemBySerialNumber(inst->GetSerialNumber(), parcel_out.quantity);
+			RemoveItemBySerialNumber(inst->GetSerialNumber(), parcel_out.quantity == 0 ? 1 : parcel_out.quantity);
 			std::unique_ptr<EQApplicationPacket> outapp(new EQApplicationPacket(OP_ShopSendParcel));
 			QueuePacket(outapp.get());
 
@@ -457,7 +472,7 @@ void Client::DoParcelSend(const Parcel_Struct *parcel_in)
 				send_to_client.at(0).character_name.c_str()
 			);
 
-			if (player_event_logs.IsEventEnabled(PlayerEvent::PARCEL_SEND)) {
+			if (PlayerEventLogs::Instance()->IsEventEnabled(PlayerEvent::PARCEL_SEND)) {
 				PlayerEvent::ParcelSend e{};
 				e.from_player_name = parcel_out.from_name;
 				e.to_player_name   = send_to_client.at(0).character_name;
@@ -561,7 +576,7 @@ void Client::DoParcelSend(const Parcel_Struct *parcel_in)
 				send_to_client.at(0).character_name.c_str()
 			);
 
-			if (player_event_logs.IsEventEnabled(PlayerEvent::PARCEL_SEND)) {
+			if (PlayerEventLogs::Instance()->IsEventEnabled(PlayerEvent::PARCEL_SEND)) {
 				PlayerEvent::ParcelSend e{};
 				e.from_player_name = parcel_out.from_name;
 				e.to_player_name   = send_to_client.at(0).character_name;
@@ -642,9 +657,9 @@ void Client::DoParcelRetrieve(const ParcelRetrieve_Struct &parcel_in)
 	if (p != m_parcels.end()) {
 		uint32 item_id       = parcel_in.parcel_item_id;
 		uint32 item_quantity = p->second.quantity;
-		if (!item_id || !item_quantity) {
+		if (!item_id) {
 			LogError(
-				"Attempt to retrieve parcel with erroneous item id or quantity for client character id {}.",
+				"Attempt to retrieve parcel with erroneous item id for client character id {}.",
 				CharacterID()
 			);
 			SendParcelRetrieveAck();
@@ -667,6 +682,8 @@ void Client::DoParcelRetrieve(const ParcelRetrieve_Struct &parcel_in)
 			SendParcelRetrieveAck();
 			return;
 		}
+
+		inst->SetEvolveCurrentAmount(p->second.evolve_amount);
 
 		if (inst->IsStackable()) {
 			inst->SetCharges(item_quantity > 0 ? item_quantity : 1);
@@ -703,6 +720,8 @@ void Client::DoParcelRetrieve(const ParcelRetrieve_Struct &parcel_in)
 							SendParcelRetrieveAck();
 							return;
 						}
+
+						item->SetEvolveCurrentAmount(i.evolve_amount);
 
 						if (CheckLoreConflict(item->GetItem())) {
 							if (RuleB(Parcel, DeleteOnDuplicate)) {
@@ -748,7 +767,7 @@ void Client::DoParcelRetrieve(const ParcelRetrieve_Struct &parcel_in)
 					);
 				}
 
-				if (player_event_logs.IsEventEnabled(PlayerEvent::PARCEL_RETRIEVE)) {
+				if (PlayerEventLogs::Instance()->IsEventEnabled(PlayerEvent::PARCEL_RETRIEVE)) {
 					PlayerEvent::ParcelRetrieve e{};
 					e.from_player_name = p->second.from_name;
 					e.item_id          = p->second.item_id;
@@ -884,6 +903,22 @@ void Client::AddParcel(CharacterParcelsRepository::CharacterParcels &parcel)
 			"Unable to send parcel at this time.  Please try again later."
 		);
 		SendParcelAck();
-		return;
 	}
+}
+
+int32 Client::FindNextFreeParcelSlotUsingMemory()
+{
+	auto const results = GetParcels();
+
+	if (results.empty()) {
+		return PARCEL_BEGIN_SLOT;
+	}
+
+	for (uint32 i = PARCEL_BEGIN_SLOT; i <= RuleI(Parcel, ParcelMaxItems); i++) {
+		if (!results.contains(i)) {
+			return i;
+		}
+	}
+
+	return INVALID_INDEX;
 }

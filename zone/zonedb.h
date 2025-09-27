@@ -336,6 +336,7 @@ struct CharacterCorpseEntry
 	uint32 drakkin_tattoo;
 	uint32 drakkin_details;
 	std::vector<CharacterCorpseItemEntry> items;
+	std::string entity_variables;
 };
 
 namespace BeastlordPetData {
@@ -463,6 +464,9 @@ public:
 	/* EXP Modifiers */
 	void LoadCharacterEXPModifier(Client* c);
 	void SaveCharacterEXPModifier(Client *c);
+
+	/* Player Title Sets */
+	void LoadCharacterTitleSets(Client* c);
 
 	float GetAAEXPModifierByCharID(uint32 character_id, uint32 zone_id, int16 instance_version = -1);
 	float GetEXPModifierByCharID(uint32 character_id, uint32 zone_id, int16 instance_version = -1);

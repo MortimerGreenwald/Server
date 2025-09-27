@@ -55,9 +55,6 @@ extern Zone *zone;
 extern volatile bool is_zone_loaded;
 extern WorldServer worldserver;
 extern uint32 numclients;
-extern PetitionList petition_list;
-
-extern char errorname[32];
 
 Entity::Entity()
 {
@@ -505,6 +502,9 @@ void EntityList::MobProcess()
 					zone->GetSecondsBeforeIdle(),
 					zone->GetSecondsBeforeIdle() != 1 ? "s" : ""
 				);
+
+				CheckToClearTraderAndBuyerTables();
+
 				mob_settle_timer->Disable();
 			}
 
@@ -739,6 +739,11 @@ void EntityList::AddNPC(NPC *npc, bool send_spawn_packet, bool dont_queue)
 
 	if (parse->HasQuestSub(ZONE_CONTROLLER_NPC_ID, EVENT_SPAWN_ZONE)) {
 		npc->DispatchZoneControllerEvent(EVENT_SPAWN_ZONE, npc, "", 0, nullptr);
+	}
+
+	if (parse->ZoneHasQuestSub(EVENT_SPAWN_ZONE)) {
+		std::vector<std::any> args = { npc };
+		parse->EventZone(EVENT_SPAWN_ZONE, zone, "", 0, &args);
 	}
 
 	if (zone->HasMap() && zone->HasWaterMap()) {
@@ -1384,7 +1389,7 @@ void EntityList::SendZoneSpawnsBulk(Client *client)
 
 			bool is_delayed_packet = (
 				DistanceSquared(client_position, spawn_position) > distance_max ||
-				(spawn->IsClient() && (spawn->GetRace() == MINOR_ILL_OBJ || spawn->GetRace() == TREE))
+				(spawn->IsClient() && (spawn->GetRace() == Race::MinorIllusion || spawn->GetRace() == Race::Tree))
 			);
 
 			if (is_delayed_packet) {
@@ -1408,7 +1413,7 @@ void EntityList::SendZoneSpawnsBulk(Client *client)
 			 *
 			 * Illusion races on PCs don't work as a mass spawn
 			 * But they will work as an add_spawn AFTER CLIENT_CONNECTED.
-			 * if (spawn->IsClient() && (race == MINOR_ILL_OBJ || race == TREE)) {
+			 * if (spawn->IsClient() && (race == Race::MinorIllusion || race == Race::Tree)) {
 			 * 	app = new EQApplicationPacket;
 			 * 	spawn->CreateSpawnPacket(app);
 			 * 	client->QueuePacket(app, true, Client::CLIENT_CONNECTED);
@@ -2335,7 +2340,7 @@ void EntityList::QueueClientsGuild(const EQApplicationPacket *app, uint32 guild_
 void EntityList::QueueClientsGuildBankItemUpdate(GuildBankItemUpdate_Struct *gbius, uint32 guild_id)
 {
 	auto outapp = std::make_unique<EQApplicationPacket>(OP_GuildBank, sizeof(GuildBankItemUpdate_Struct));
-	auto data   = reinterpret_cast<GuildBankItemUpdate_Struct *>(outapp->pBuffer);
+	auto data = reinterpret_cast<GuildBankItemUpdate_Struct *>(outapp->pBuffer);
 
 	memcpy(data, gbius, sizeof(GuildBankItemUpdate_Struct));
 
@@ -2914,7 +2919,7 @@ void EntityList::ScanCloseMobs(Mob *scanning_mob)
 		return;
 	}
 
-	if (scanning_mob->GetID() <= 0) {
+	if (scanning_mob->GetID() <= 0 || scanning_mob->IsZoneController()) {
 		return;
 	}
 
@@ -2933,7 +2938,7 @@ void EntityList::ScanCloseMobs(Mob *scanning_mob)
 	for (auto &e : mob_list) {
 		auto mob = e.second;
 
-		if (mob && mob->GetID() <= 0) {
+		if (mob && (mob->GetID() <= 0 || mob->IsZoneController())) {
 			continue;
 		}
 
@@ -3143,20 +3148,30 @@ void EntityList::Depop(bool StartSpawnTimer)
 {
 	for (auto it = npc_list.begin(); it != npc_list.end(); ++it) {
 		NPC *pnpc = it->second;
+
 		if (pnpc) {
 			Mob *own = pnpc->GetOwner();
-			//do not depop player's pets...
-			if (own && own->IsClient())
+			//do not depop player/bot pets...
+			if (own && own->IsOfClientBot()) {
 				continue;
+			}
 
-			if (pnpc->IsHorse())
+			if (pnpc->IsHorse()) {
 				continue;
+			}
 
-			if (pnpc->IsFindable())
+			if (pnpc->IsFindable()) {
 				UpdateFindableNPCState(pnpc, true);
+			}
+
+			// Depop below will eventually remove this npc from the entity list
+			// but that can happen AFTER we've already tried to spawn its replacement.
+			// So go ahead and remove it from the limits so it doesn't count.
+			if (npc_limit_list.count(pnpc->GetID())) {
+				npc_limit_list.erase(pnpc->GetID());
+			}
 
 			pnpc->WipeHateList();
-
 			pnpc->Depop(StartSpawnTimer);
 		}
 	}
@@ -3434,7 +3449,7 @@ void EntityList::SendPetitionToAdmins(Petition *pet)
 		strcpy(pcus->accountid, pet->GetAccountName());
 		strcpy(pcus->charname, pet->GetCharName());
 	}
-	pcus->quetotal = petition_list.GetTotalPetitions();
+	pcus->quetotal = PetitionList::Instance()->GetTotalPetitions();
 	auto it = client_list.begin();
 	while (it != client_list.end()) {
 		if (it->second->CastToClient()->Admin() >= AccountStatus::QuestTroupe) {
@@ -3459,7 +3474,7 @@ void EntityList::ClearClientPetitionQueue()
 	strcpy(pet->accountid, "");
 	strcpy(pet->gmsenttoo, "");
 	strcpy(pet->charname, "");
-	pet->quetotal = petition_list.GetTotalPetitions();
+	pet->quetotal = PetitionList::Instance()->GetTotalPetitions();
 	auto it = client_list.begin();
 	while (it != client_list.end()) {
 		if (it->second->CastToClient()->Admin() >= AccountStatus::GMAdmin) {
@@ -4162,10 +4177,6 @@ void EntityList::ProcessProximitySay(const char *message, Client *c, uint8 langu
 
 void EntityList::SaveAllClientsTaskState()
 {
-	if (!task_manager) {
-		return;
-	}
-
 	auto it = client_list.begin();
 	while (it != client_list.end()) {
 		Client *client = it->second;
@@ -4179,9 +4190,6 @@ void EntityList::SaveAllClientsTaskState()
 
 void EntityList::ReloadAllClientsTaskState(int task_id)
 {
-	if (!task_manager)
-		return;
-
 	auto it = client_list.begin();
 	while (it != client_list.end()) {
 		Client *client = it->second;
@@ -4192,7 +4200,7 @@ void EntityList::ReloadAllClientsTaskState(int task_id)
 				Log(Logs::General, Logs::Tasks, "[CLIENTLOAD] Reloading Task State For Client %s", client->GetName());
 				client->RemoveClientTaskState();
 				client->LoadClientTaskState();
-				task_manager->SendActiveTasksToClient(client);
+				TaskManager::Instance()->SendActiveTasksToClient(client);
 			}
 		}
 		++it;
@@ -5987,4 +5995,34 @@ void EntityList::SendMerchantInventory(Mob* m, int32 slot_id, bool is_delete)
 	}
 
 	return;
+}
+
+void EntityList::RestoreCorpse(NPC *npc, uint32_t decay_time)
+{
+	uint16 corpse_id = npc->GetID();
+	npc->Death(npc, npc->GetHP() + 1, SPELL_UNKNOWN, EQ::skills::SkillHandtoHand);
+	auto c = entity_list.GetCorpseByID(corpse_id);
+	if (c) {
+		c->UnLock();
+		c->SetDecayTimer(decay_time);
+	}
+}
+
+void EntityList::CheckToClearTraderAndBuyerTables()
+{
+	if (zone->GetZoneID() == Zones::BAZAAR) {
+		TraderRepository::DeleteWhere(
+			database,
+			fmt::format(
+				"`char_zone_id` = {} AND `char_zone_instance_id` = {}", zone->GetZoneID(), zone->GetInstanceID()
+			)
+		);
+		BuyerRepository::DeleteBuyers(database, zone->GetZoneID(), zone->GetInstanceID());
+
+		LogTradingDetail(
+			"Removed trader and buyer entries for Zone ID [{}] and Instance ID [{}]",
+			zone->GetZoneID(),
+			zone->GetInstanceID()
+		);
+	}
 }

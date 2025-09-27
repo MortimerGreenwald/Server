@@ -32,7 +32,9 @@
 #include "../common/repositories/character_corpse_items_repository.h"
 #include <iostream>
 #include "queryserv.h"
+#include "../common/json/json.hpp"
 
+using json = nlohmann::json;
 
 extern EntityList           entity_list;
 extern Zone                *zone;
@@ -290,7 +292,7 @@ Corpse::Corpse(Client *c, int32 rez_exp, KilledByTypes in_killed_by) : Mob(
 	m_corpse_graveyard_timer.SetTimer(RuleI(Zone, GraveyardTimeMS));
 	m_loot_cooldown_timer.SetTimer(10);
 	m_check_rezzable_timer.SetTimer(1000);
-	m_check_owner_online_timer.SetTimer(RuleI(Character, CorpseOwnerOnlineTime));
+	m_check_owner_online_timer.SetTimer(RuleI(Character, CorpseOwnerOnlineCheckTime) * 1000);
 
 	m_corpse_rezzable_timer.Disable();
 	SetRezTimer(true);
@@ -583,7 +585,7 @@ Corpse::Corpse(
 	m_corpse_delay_timer.SetTimer(RuleI(NPC, CorpseUnlockTimer));
 	m_corpse_graveyard_timer.SetTimer(RuleI(Zone, GraveyardTimeMS));
 	m_loot_cooldown_timer.SetTimer(10);
-	m_check_owner_online_timer.SetTimer(RuleI(Character, CorpseOwnerOnlineTime));
+	m_check_owner_online_timer.SetTimer(RuleI(Character, CorpseOwnerOnlineCheckTime) * 1000);
 	m_check_rezzable_timer.SetTimer(1000);
 	m_corpse_rezzable_timer.Disable();
 
@@ -673,6 +675,21 @@ bool Corpse::Save()
 	ce.drakkin_heritage = drakkin_heritage;
 	ce.drakkin_tattoo   = drakkin_tattoo;
 	ce.drakkin_details  = drakkin_details;
+
+	{
+		json j;
+		for (const auto& kv : m_EntityVariables) {
+			j[kv.first] = kv.second;
+		}
+
+		if (!j.empty()) {
+			ce.entity_variables = j.dump();
+		} else {
+			ce.entity_variables = "{}";
+		}
+
+		LogCorpses("Corpse entity_variables: %s", ce.entity_variables.c_str());
+	}
 
 	for (auto &item: m_item_list) {
 		CharacterCorpseItemEntry e;
@@ -1569,7 +1586,22 @@ void Corpse::LootCorpseItem(Client *c, const EQApplicationPacket *app)
 			}
 		}
 
-		if (player_event_logs.IsEventEnabled(PlayerEvent::LOOT_ITEM) && !IsPlayerCorpse()) {
+		if (parse->ZoneHasQuestSub(EVENT_LOOT_ZONE)) {
+			const auto &export_string = fmt::format(
+				"{} {} {} {}",
+				inst->GetItem()->ID,
+				inst->GetCharges(),
+				EntityList::RemoveNumbers(corpse_name),
+				GetID()
+			);
+
+			std::vector<std::any> args = {inst, this, c};
+			if (parse->EventZone(EVENT_LOOT_ZONE, zone, export_string, 0, &args) != 0) {
+				prevent_loot = true;
+			}
+		}
+
+		if (inst && PlayerEventLogs::Instance()->IsEventEnabled(PlayerEvent::LOOT_ITEM) && !IsPlayerCorpse()) {
 			auto e = PlayerEvent::LootItemEvent{
 				.item_id      = inst->GetItem()->ID,
 				.item_name    = inst->GetItem()->Name,
@@ -2428,9 +2460,36 @@ Corpse *Corpse::LoadCharacterCorpse(
 	c->m_become_npc                = false;
 	c->m_consented_guild_id        = cc.guild_consent_id;
 
+	try {
+		if (Strings::IsValidJson(cc.entity_variables)) {
+			json j = json::parse(cc.entity_variables);
+			for (auto& el : j.items()) {
+				c->SetEntityVariable(el.key(), el.value().get<std::string>());
+			}
+		}
+	} catch (const std::exception& ex) {
+		LogError("Failed to parse entity_variables JSON for corpse ID %u: %s", cc.id, ex.what());
+	}
+
 	c->IsRezzed(cc.is_rezzed);
 
 	c->UpdateEquipmentLight();
 
 	return c;
+}
+
+void Corpse::SyncEntityVariablesToCorpseDB()
+{
+	if (!m_is_player_corpse || m_corpse_db_id == 0) {
+		return;
+	}
+
+	json j;
+	for (const auto& [key, value] : m_EntityVariables) {
+		j[key] = value;
+	}
+
+	std::string serialized = j.dump();
+
+	CharacterCorpsesRepository::UpdateEntityVariables(database, m_corpse_db_id, serialized);
 }

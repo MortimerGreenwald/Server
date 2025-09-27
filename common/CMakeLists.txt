@@ -17,6 +17,7 @@ SET(common_sources
     database.cpp
     database_instances.cpp
     database/database_update_manifest.cpp
+    database/database_update_manifest_custom.cpp
     database/database_update_manifest_bots.cpp
     database/database_update.cpp
     dbcore.cpp
@@ -103,9 +104,9 @@ SET(common_sources
     net/console_server.cpp
     net/console_server_connection.cpp
     net/crc32.cpp
-    net/daybreak_connection.cpp
     net/eqstream.cpp
     net/packet.cpp
+    net/reliable_stream_connection.cpp
     net/servertalk_client_connection.cpp
     net/servertalk_legacy_client_connection.cpp
     net/servertalk_server.cpp
@@ -602,7 +603,6 @@ SET(common_headers
     ipc_mutex.h
     ip_util.h
     item_data.h
-    item_fieldlist.h
     item_instance.h
     json_config.h
     light_source.h
@@ -670,18 +670,20 @@ SET(common_headers
     net/console_server.h
     net/console_server_connection.h
     net/crc32.h
-    net/daybreak_connection.h
-    net/daybreak_structs.h
     net/dns.h
     net/endian.h
     net/eqstream.h
     net/packet.h
+    net/reliable_stream_connection.h
+    net/reliable_stream_pooling.h
+    net/reliable_stream_structs.h
     net/servertalk_client_connection.h
     net/servertalk_legacy_client_connection.h
     net/servertalk_common.h
     net/servertalk_server.h
     net/servertalk_server_connection.h
     net/tcp_connection.h
+    net/tcp_connection_pooling.h
     net/tcp_server.h
     net/websocket_server.h
     net/websocket_server_connection.h
@@ -740,9 +742,6 @@ SOURCE_GROUP(Net FILES
     net/console_server_connection.h
     net/crc32.cpp
     net/crc32.h
-    net/daybreak_connection.cpp
-    net/daybreak_connection.h
-    net/daybreak_structs.h
     net/dns.h
     net/endian.h
     net/eqmq.cpp
@@ -751,6 +750,10 @@ SOURCE_GROUP(Net FILES
     net/eqstream.h
     net/packet.cpp
     net/packet.h
+    net/reliable_stream_connection.cpp
+    net/reliable_stream_connection.h
+    net/reliable_stream_pooling.h
+    net/reliable_stream_structs.h
     net/servertalk_client_connection.cpp
     net/servertalk_client_connection.h
     net/servertalk_legacy_client_connection.cpp
@@ -762,6 +765,7 @@ SOURCE_GROUP(Net FILES
     net/servertalk_server_connection.h
     net/tcp_connection.cpp
     net/tcp_connection.h
+    net/tcp_connection_pooling.h
     net/tcp_server.cpp
     net/tcp_server.h
     net/websocket_server.cpp
@@ -836,8 +840,8 @@ IF (UNIX)
     SET_SOURCE_FILES_PROPERTIES("patches/sod.cpp" "patches/sof.cpp" "patches/rof.cpp" "patches/rof2.cpp" "patches/uf.cpp" PROPERTIES COMPILE_FLAGS -O0)
 ENDIF (UNIX)
 
-IF (WIN32 AND EQEMU_BUILD_PCH)
-    TARGET_PRECOMPILE_HEADERS(common PRIVATE pch/pch.h)
+IF (EQEMU_BUILD_PCH)
+    TARGET_PRECOMPILE_HEADERS(common PRIVATE pch/std-pch.h)
 ENDIF ()
 
 SET(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)

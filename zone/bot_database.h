@@ -24,7 +24,7 @@
 #include <list>
 #include <map>
 #include <vector>
-
+#include "bot_structs.h"
 
 class Bot;
 class Client;
@@ -48,7 +48,7 @@ public:
 
 
 	/* Bot functions   */
-	bool QueryNameAvailablity(const std::string& bot_name, bool& available_flag);
+	bool QueryNameAvailability(const std::string& bot_name, bool& available_flag);
 	bool QueryBotCount(const uint32 owner_id, int class_id, uint32& bot_count, uint32& bot_class_count);
 	bool LoadBotsList(const uint32 owner_id, std::list<BotsAvailableList>& bots_list, bool by_account = false);
 
@@ -129,6 +129,10 @@ public:
 	bool LoadBotSettings(Mob* m);
 	bool SaveBotSettings(Mob* m);
 	bool DeleteBotSettings(const uint32 bot_id);
+
+	void CheckBotSpells();
+	void MapCommandedSpellTypeMinLevels();
+	std::map<int32_t, std::map<int32_t, BotSpellTypesByClass>> GetCommandedSpellTypesMinLevels() { return commanded_spell_type_min_levels; }
 
 	/* Bot group functions   */
 	bool LoadGroupedBotsByGroupID(const uint32 owner_id, const uint32 group_id, std::list<uint32>& group_list);
@@ -211,6 +215,10 @@ public:
 
 	private:
 		std::string query;
+
+	protected:
+		std::map<int32_t, std::map<int32_t, BotSpellTypesByClass>> commanded_spell_type_min_levels;
+
 };
 
 #endif

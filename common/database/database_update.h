@@ -17,6 +17,7 @@ struct ManifestEntry {
 struct DatabaseVersion {
 	int server_database_version;
 	int bots_database_version;
+	int custom_database_version;
 };
 
 class DatabaseUpdate {
@@ -32,12 +33,20 @@ public:
 	DatabaseUpdate *SetContentDatabase(Database *db);
 	DatabaseUpdate *SetSkipBackup(bool skip);
 	bool HasPendingUpdates();
+
+	static DatabaseUpdate* Instance()
+	{
+		static DatabaseUpdate instance;
+		return &instance;
+	}
+
 private:
 	bool m_skip_backup = false;
 	Database *m_database;
 	Database *m_content_database;
 	static bool CheckVersionsUpToDate(DatabaseVersion v, DatabaseVersion b);
 	void InjectBotsVersionColumn();
+	void InjectCustomVersionColumn();
 
 };
 

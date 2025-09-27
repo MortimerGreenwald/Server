@@ -81,14 +81,11 @@
 #endif
 
 extern bool staticzone;
-extern PetitionList petition_list;
 extern QuestParserCollection* parse;
 extern uint32 numclients;
 extern WorldServer worldserver;
 extern Zone* zone;
 extern NpcScaleManager* npc_scale_manager;
-
-Mutex MZoneShutdown;
 
 volatile bool is_zone_loaded = false;
 Zone* zone = 0;
@@ -178,7 +175,7 @@ bool Zone::Bootup(uint32 iZoneID, uint32 iInstanceID, bool is_static) {
 	/*
 	 * Set Logging
 	 */
-	LogSys.StartFileLogs(StringFormat("%s_version_%u_inst_id_%u_port_%u", zone->GetShortName(), zone->GetInstanceVersion(), zone->GetInstanceID(), ZoneConfig::get()->ZonePort));
+	EQEmuLogSys::Instance()->StartFileLogs(StringFormat("%s_version_%u_inst_id_%u_port_%u", zone->GetShortName(), zone->GetInstanceVersion(), zone->GetInstanceID(), ZoneConfig::get()->ZonePort));
 
 	return true;
 }
@@ -887,7 +884,7 @@ void Zone::Shutdown(bool quiet)
 		c.second->WorldKick();
 	}
 
-	if (RuleB(Zone, StateSavingOnShutdown)) {
+	if (m_save_zone_state && RuleB(Zone, StateSavingOnShutdown) && zone && zone->IsLoaded()) {
 		SaveZoneState();
 	}
 
@@ -926,7 +923,7 @@ void Zone::Shutdown(bool quiet)
 		GetInstanceVersion(),
 		GetInstanceID()
 	);
-	petition_list.ClearPetitions();
+	PetitionList::Instance()->ClearPetitions();
 	SetZoneHasCurrentTime(false);
 	if (!quiet) {
 		LogInfo(
@@ -946,7 +943,7 @@ void Zone::Shutdown(bool quiet)
 	parse->ReloadQuests(true);
 	UpdateWindowTitle(nullptr);
 
-	LogSys.CloseFileLogs();
+	EQEmuLogSys::Instance()->CloseFileLogs();
 
 	if (RuleB(Zone, KillProcessOnDynamicShutdown)) {
 		LogInfo("Shutting down");
@@ -1010,6 +1007,7 @@ Zone::Zone(uint32 in_zoneid, uint32 in_instanceid, const char* in_short_name)
 
 	SetIdleWhenEmpty(true);
 	SetSecondsBeforeIdle(60);
+	SetSaveZoneState(false);
 
 	if (database.GetServerType() == 1) {
 		pvpzone = true;
@@ -1190,6 +1188,11 @@ bool Zone::Init(bool is_static) {
 
 	RespawnTimesRepository::ClearExpiredRespawnTimers(database);
 
+	// Loading zone variables so they're available for things like encounter_load
+	if (RuleB(Zone, StateSavingOnShutdown)) {
+		zone->LoadZoneVariablesState();
+	}
+
 	// make sure that anything that needs to be loaded prior to scripts is loaded before here
 	// this is to ensure that the scripts have access to the data they need
 	parse->ReloadQuests(true);
@@ -1204,6 +1207,8 @@ bool Zone::Init(bool is_static) {
 	}
 
 	content_db.PopulateZoneSpawnList(zoneid, spawn2_list, GetInstanceVersion());
+	SetSaveZoneState(true);
+
 	database.LoadCharacterCorpses(zoneid, instanceid);
 
 	content_db.LoadTraps(short_name, GetInstanceVersion());
@@ -1228,17 +1233,17 @@ bool Zone::Init(bool is_static) {
 		LoadMercenarySpells();
 	}
 
-	petition_list.ClearPetitions();
-	petition_list.ReadDatabase();
+	PetitionList::Instance()->ClearPetitions();
+	PetitionList::Instance()->ReadDatabase();
 
 	guild_mgr.LoadGuilds();
 
 	LogInfo("Zone booted successfully zone_id [{}] time_offset [{}]", zoneid, zone_time.getEQTimeZone());
 
 	// logging origination information
-	LogSys.origination_info.zone_short_name = zone->short_name;
-	LogSys.origination_info.zone_long_name  = zone->long_name;
-	LogSys.origination_info.instance_id     = zone->instanceid;
+	EQEmuLogSys::Instance()->origination_info.zone_short_name = zone->short_name;
+	EQEmuLogSys::Instance()->origination_info.zone_long_name  = zone->long_name;
+	EQEmuLogSys::Instance()->origination_info.instance_id     = zone->instanceid;
 
 	return true;
 }
@@ -1286,7 +1291,7 @@ void Zone::ReloadStaticData() {
 		);
 	} // if that fails, try the file name, then load defaults
 
-	content_service.SetExpansionContext()->ReloadContentFlags();
+	WorldContentService::Instance()->SetExpansionContext()->ReloadContentFlags();
 
 
 	LogInfo("Zone Static Data Reloaded");
@@ -1294,7 +1299,7 @@ void Zone::ReloadStaticData() {
 
 bool Zone::LoadZoneCFG(const char* filename, uint16 instance_version)
 {
-	auto z = zone_store.GetZoneWithFallback(ZoneID(filename), instance_version);
+	auto z = ZoneStore::Instance()->GetZoneWithFallback(ZoneID(filename), instance_version);
 
 	if (!z) {
 		LogError("Failed to load zone data for [{}] instance_version [{}]", filename, instance_version);
@@ -1534,7 +1539,6 @@ bool Zone::Process() {
 	spawn_conditions.Process();
 
 	if (spawn2_timer.Check()) {
-
 		LinkedListIterator<Spawn2 *> iterator(spawn2_list);
 
 		EQ::InventoryProfile::CleanDirty();
@@ -1686,6 +1690,25 @@ bool Zone::Process() {
 				iterator2.GetData()->stale = true;
 				iterator2.Advance();
 			}
+		}
+	}
+
+	const bool has_timer_event = parse->ZoneHasQuestSub(EVENT_TIMER);
+
+	for (auto e : zone_timers) {
+		if (e.timer_.Enabled() && e.timer_.Check()) {
+			if (has_timer_event) {
+				parse->EventZone(EVENT_TIMER, this, e.name);
+			}
+		}
+	}
+
+	if (!m_zone_signals.empty()) {
+		int signal_id = m_zone_signals.front();
+		m_zone_signals.pop_front();
+
+		if (parse->ZoneHasQuestSub(EVENT_SIGNAL)) {
+			parse->EventZone(EVENT_SIGNAL, this, std::to_string(signal_id), 0);
 		}
 	}
 
@@ -1930,6 +1953,8 @@ void Zone::Repop(bool is_forced)
 	entity_list.ClearTrapPointers();
 
 	quest_manager.ClearAllTimers();
+
+	StopAllTimers();
 
 	LogInfo("Loading spawn groups");
 	if (!content_db.LoadSpawnGroups(short_name, GetInstanceVersion(), &spawn_group_list)) {
@@ -2246,7 +2271,7 @@ void Zone::LoadZoneBlockedSpells()
 			if (!content_db.LoadBlockedSpells(zone_total_blocked_spells, blocked_spells, GetZoneID())) {
 				LogError(
 					"Failed to load blocked spells for {} ({}).",
-					zone_store.GetZoneName(GetZoneID(), true),
+					ZoneStore::Instance()->GetZoneName(GetZoneID(), true),
 					GetZoneID()
 				);
 				ClearBlockedSpells();
@@ -2256,7 +2281,7 @@ void Zone::LoadZoneBlockedSpells()
 		LogInfo(
 			"Loaded [{}] blocked spells(s) for {} ({}).",
 			Strings::Commify(zone_total_blocked_spells),
-			zone_store.GetZoneName(GetZoneID(), true),
+			ZoneStore::Instance()->GetZoneName(GetZoneID(), true),
 			GetZoneID()
 		);
 	}
@@ -2861,7 +2886,7 @@ void Zone::SendDiscordMessage(const std::string& webhook_name, const std::string
 	bool not_found = true;
 
 	for (int i= 0; i < MAX_DISCORD_WEBHOOK_ID; i++) {
-		auto &w = LogSys.GetDiscordWebhooks()[i];
+		auto &w = EQEmuLogSys::Instance()->GetDiscordWebhooks()[i];
 		if (w.webhook_name == webhook_name) {
 			SendDiscordMessage(w.id, message + "\n");
 			not_found = false;
@@ -3218,5 +3243,346 @@ void Zone::DisableRespawnTimers()
 	}
 }
 
-#include "zone_save_state.cpp"
+bool Zone::ClearVariables()
+{
+	if (m_zone_variables.empty()) {
+		return false;
+	}
+
+	m_zone_variables.clear();
+	return true;
+}
+
+bool Zone::DeleteVariable(const std::string& variable_name)
+{
+	if (m_zone_variables.empty() || variable_name.empty()) {
+		return false;
+	}
+
+	auto v = m_zone_variables.find(variable_name);
+	if (v == m_zone_variables.end()) {
+		return false;
+	}
+
+	m_zone_variables.erase(v);
+
+	return true;
+}
+
+std::string Zone::GetVariable(const std::string& variable_name)
+{
+	if (m_zone_variables.empty() || variable_name.empty()) {
+		return std::string();
+	}
+
+	const auto& v = m_zone_variables.find(variable_name);
+
+	return v != m_zone_variables.end() ? v->second : std::string();
+}
+
+std::vector<std::string> Zone::GetVariables()
+{
+	std::vector<std::string> l;
+
+	if (m_zone_variables.empty()) {
+		return l;
+	}
+
+	l.reserve(m_zone_variables.size());
+
+	for (const auto& v : m_zone_variables) {
+		l.emplace_back(v.first);
+	}
+
+	return l;
+}
+
+void Zone::SetVariable(const std::string& variable_name, const std::string& variable_value)
+{
+	if (variable_name.empty()) {
+		return;
+	}
+
+	m_zone_variables[variable_name] = variable_value;
+}
+
+bool Zone::VariableExists(const std::string& variable_name)
+{
+	if (m_zone_variables.empty() || variable_name.empty()) {
+		return false;
+	}
+
+	return m_zone_variables.find(variable_name) != m_zone_variables.end();
+}
+
+void Zone::ReloadMaps()
+{
+	zonemap  = Map::LoadMapFile(map_name);
+	watermap = WaterMap::LoadWaterMapfile(map_name);
+	pathing  = IPathfinder::Load(map_name);
+}
+
+uint32 Zone::GetTimerDuration(std::string name)
+{
+	if (!IsLoaded() || zone_timers.empty()) {
+		return 0;
+	}
+
+	const auto& e = std::find_if(
+		zone_timers.begin(),
+		zone_timers.end(),
+		[&name](ZoneTimer e) {
+			return e.name == name;
+		}
+	);
+
+	return e != zone_timers.end() ? e->timer_.GetDuration() : 0;
+}
+
+uint32 Zone::GetTimerRemainingTime(std::string name)
+{
+	if (!IsLoaded() || zone_timers.empty()) {
+		return 0;
+	}
+
+	const auto& e = std::find_if(
+		zone_timers.begin(),
+		zone_timers.end(),
+		[&name](ZoneTimer e) {
+			return e.name == name;
+		}
+	);
+
+	return e != zone_timers.end() ? e->timer_.GetRemainingTime() : 0;
+}
+
+bool Zone::HasTimer(std::string name)
+{
+	if (!IsLoaded() || zone_timers.empty()) {
+		return false;
+	}
+
+	const auto& e = std::find_if(
+		zone_timers.begin(),
+		zone_timers.end(),
+		[&name](ZoneTimer e) {
+			return e.name == name;
+		}
+	);
+
+	return e != zone_timers.end();
+}
+
+bool Zone::IsPausedTimer(std::string name)
+{
+	if (!IsLoaded() || paused_zone_timers.empty()) {
+		return false;
+	}
+
+	const auto& e = std::find_if(
+		paused_zone_timers.begin(),
+		paused_zone_timers.end(),
+		[&name](PausedZoneTimer e) {
+			return e.name == name;
+		}
+	);
+
+	return e != paused_zone_timers.end();
+}
+
+void Zone::PauseTimer(std::string name)
+{
+	if (
+		!IsLoaded() ||
+		zone_timers.empty() ||
+		!HasTimer(name) ||
+		IsPausedTimer(name)
+	) {
+		return;
+	}
+
+	uint32 remaining_time = 0;
+
+	const bool has_pause_event = parse->ZoneHasQuestSub(EVENT_TIMER_PAUSE);
+
+	if (!zone_timers.empty()) {
+		for (auto e = zone_timers.begin(); e != zone_timers.end(); e++) {
+			if (e->name == name) {
+				remaining_time = e->timer_.GetRemainingTime();
+
+				zone_timers.erase(e);
+
+				const std::string& export_string = fmt::format(
+					"{} {}",
+					name,
+					remaining_time
+				);
+
+				LogQuests(
+					"Pausing timer [{}] with [{}] ms remaining",
+					name,
+					remaining_time
+				);
+
+				paused_zone_timers.emplace_back(
+					PausedZoneTimer{
+						.name = name,
+						.remaining_time = remaining_time
+					}
+				);
+
+				if (has_pause_event) {
+					parse->EventZone(EVENT_TIMER_PAUSE, this, export_string);
+				}
+
+				break;
+			}
+		}
+	}
+}
+
+void Zone::ResumeTimer(std::string name)
+{
+	if (
+		!IsLoaded() ||
+		paused_zone_timers.empty() ||
+		!IsPausedTimer(name)
+	) {
+		return;
+	}
+
+	uint32 remaining_time = 0;
+
+	if (!paused_zone_timers.empty()) {
+		for (auto e = paused_zone_timers.begin(); e != paused_zone_timers.end(); e++) {
+			if (e->name == name) {
+				remaining_time = e->remaining_time;
+
+				paused_zone_timers.erase(e);
+
+				if (!remaining_time) {
+					LogQuests("Paused timer [{}] not found or has expired.", name);
+					return;
+				}
+
+				const std::string& export_string = fmt::format(
+					"{} {}",
+					name,
+					remaining_time
+				);
+
+				LogQuests(
+					"Creating a new timer and resuming [{}] with [{}] ms remaining",
+					name,
+					remaining_time
+				);
+
+				zone_timers.emplace_back(ZoneTimer(name, remaining_time));
+
+				if (parse->ZoneHasQuestSub(EVENT_TIMER_RESUME)) {
+					parse->EventZone(EVENT_TIMER_RESUME, this, export_string);
+				}
+
+				break;
+			}
+		}
+	}
+}
+
+void Zone::SetTimer(std::string name, uint32 duration)
+{
+	if (!IsLoaded() || HasTimer(name)) {
+		return;
+	}
+
+	zone_timers.emplace_back(ZoneTimer(name, duration));
+
+	if (parse->ZoneHasQuestSub(EVENT_TIMER_START)) {
+		const std::string& export_string = fmt::format("{} {}", name, duration);
+		parse->EventZone(EVENT_TIMER_START, this, export_string);
+	}
+}
+
+void Zone::StopTimer(std::string name)
+{
+	if (
+		!IsLoaded() ||
+		zone_timers.empty() ||
+		!HasTimer(name) ||
+		IsPausedTimer(name)
+	) {
+		return;
+	}
+
+	const bool has_stop_event = parse->ZoneHasQuestSub(EVENT_TIMER_STOP);
+
+	for (auto e = zone_timers.begin(); e != zone_timers.end(); e++) {
+		if (e->name == name) {
+			if (has_stop_event) {
+				parse->EventZone(EVENT_TIMER_STOP, this, name);
+			}
+
+			zone_timers.erase(e);
+			break;
+		}
+	}
+}
+
+void Zone::StopAllTimers()
+{
+	if (!IsLoaded() || zone_timers.empty()) {
+		return;
+	}
+
+	const bool has_stop_event = parse->ZoneHasQuestSub(EVENT_TIMER_STOP);
+
+	for (auto e = zone_timers.begin(); e != zone_timers.end();) {
+		if (has_stop_event) {
+			parse->EventZone(EVENT_TIMER_STOP, this, e->name);
+		}
+
+		e = zone_timers.erase(e);
+	}
+}
+
+void Zone::Signal(int signal_id)
+{
+	m_zone_signals.push_back(signal_id);
+}
+
+void Zone::SendPayload(int payload_id, std::string payload_value)
+{
+	if (parse->ZoneHasQuestSub(EVENT_PAYLOAD)) {
+		const auto& export_string = fmt::format("{} {}", payload_id, payload_value);
+
+		parse->EventZone(EVENT_PAYLOAD, this, export_string, 0);
+	}
+}
+
+std::vector<std::string> Zone::GetPausedTimers()
+{
+	std::vector<std::string> v;
+
+	if (!paused_zone_timers.empty()) {
+		for (auto e = paused_zone_timers.begin(); e != paused_zone_timers.end(); e++) {
+			v.emplace_back(e->name);
+		}
+	}
+
+	return v;
+}
+
+std::vector<std::string> Zone::GetTimers()
+{
+	std::vector<std::string> v;
+
+	if (!zone_timers.empty()) {
+		for (auto e = zone_timers.begin(); e != zone_timers.end(); e++) {
+			v.emplace_back(e->name);
+		}
+	}
+
+	return v;
+}
+
 #include "zone_loot.cpp"

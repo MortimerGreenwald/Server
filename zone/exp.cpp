@@ -22,7 +22,7 @@
 #include "../common/strings.h"
 
 #include "client.h"
-#include "data_bucket.h"
+#include "../common/data_bucket.h"
 #include "groups.h"
 #include "mob.h"
 #include "raids.h"
@@ -130,7 +130,7 @@ uint64 Client::CalcEXP(uint8 consider_level, bool ignore_modifiers) {
 			if (
 				GetClass() == Class::Warrior ||
 				GetClass() == Class::Rogue ||
-				GetBaseRace() == HALFLING
+				GetBaseRace() == Race::Halfling
 			) {
 				total_modifier *= 1.05;
 			}
@@ -291,7 +291,7 @@ void Client::CalculateStandardAAExp(uint64 &add_aaxp, uint8 conlevel, bool resex
 	// Shouldn't race not affect AA XP?
 	if (RuleB(Character, UseRaceClassExpBonuses))
 	{
-		if (GetBaseRace() == HALFLING) {
+		if (GetBaseRace() == Race::Halfling) {
 			aatotalmod *= 1.05;
 		}
 
@@ -439,7 +439,7 @@ void Client::CalculateExp(uint64 in_add_exp, uint64 &add_exp, uint64 &add_aaxp, 
 
 		if (RuleB(Character, UseRaceClassExpBonuses))
 		{
-			if (GetBaseRace() == HALFLING) {
+			if (GetBaseRace() == Race::Halfling) {
 				totalmod *= 1.05;
 			}
 
@@ -922,7 +922,7 @@ void Client::SetLevel(uint8 set_level, bool command)
 			parse->EventPlayer(EVENT_LEVEL_UP, this, std::to_string(levels_gained), 0);
 		}
 
-		if (player_event_logs.IsEventEnabled(PlayerEvent::LEVEL_GAIN)) {
+		if (PlayerEventLogs::Instance()->IsEventEnabled(PlayerEvent::LEVEL_GAIN)) {
 			auto e = PlayerEvent::LevelGainedEvent{
 				.from_level = m_pp.level,
 				.to_level = set_level,
@@ -938,7 +938,7 @@ void Client::SetLevel(uint8 set_level, bool command)
 			parse->EventPlayer(EVENT_LEVEL_DOWN, this, std::to_string(levels_lost), 0);
 		}
 
-		if (player_event_logs.IsEventEnabled(PlayerEvent::LEVEL_LOSS)) {
+		if (PlayerEventLogs::Instance()->IsEventEnabled(PlayerEvent::LEVEL_LOSS)) {
 			auto e = PlayerEvent::LevelLostEvent{
 				.from_level = m_pp.level,
 				.to_level = set_level,
@@ -1057,13 +1057,13 @@ uint32 Client::GetEXPForLevel(uint16 check_level)
 	if(RuleB(Character,UseOldRaceExpPenalties))
 	{
 		float racemod = 1.0;
-		if(GetBaseRace() == TROLL || GetBaseRace() == IKSAR) {
+		if(GetBaseRace() == Race::Troll || GetBaseRace() == Race::Iksar) {
 			racemod = 1.2;
-		} else if(GetBaseRace() == OGRE) {
+		} else if(GetBaseRace() == Race::Ogre) {
 			racemod = 1.15;
-		} else if(GetBaseRace() == BARBARIAN) {
+		} else if(GetBaseRace() == Race::Barbarian) {
 			racemod = 1.05;
-		} else if(GetBaseRace() == HALFLING) {
+		} else if(GetBaseRace() == Race::Halfling) {
 			racemod = 0.95;
 		}
 

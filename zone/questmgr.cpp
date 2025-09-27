@@ -40,6 +40,7 @@
 #include "dialogue_window.h"
 
 #include "../common/repositories/account_repository.h"
+#include "../common/repositories/completed_tasks_repository.h"
 #include "../common/repositories/tradeskill_recipe_repository.h"
 #include "../common/repositories/instance_list_repository.h"
 #include "../common/repositories/grid_entries_repository.h"
@@ -63,10 +64,10 @@ QuestManager quest_manager;
 	EQ::ItemInstance* questitem = nullptr; \
 	const SPDat_Spell_Struct* questspell = nullptr; \
 	bool depop_npc = false; \
-	std::string encounter; \
+	std::string encounter = ""; \
 	do { \
-		if(!quests_running_.empty()) { \
-			running_quest e = quests_running_.top(); \
+		if(!m_running_quests.empty()) { \
+			RunningQuest e = m_running_quests.top(); \
 			owner = e.owner; \
 			initiator = e.initiator; \
 			questitem = e.questitem; \
@@ -123,33 +124,30 @@ void QuestManager::Process() {
 	}
 }
 
-void QuestManager::StartQuest(Mob *_owner, Client *_initiator, EQ::ItemInstance* _questitem, const SPDat_Spell_Struct* _questspell, std::string encounter) {
-	running_quest run;
-	run.owner = _owner;
-	run.initiator = _initiator;
-	run.questitem = _questitem;
-	run.questspell = _questspell;
-	run.depop_npc = false;
-	run.encounter = encounter;
-	quests_running_.push(run);
+void QuestManager::StartQuest(const RunningQuest& q)
+{
+	m_running_quests.push(q);
 }
 
 void QuestManager::EndQuest() {
-	running_quest run = quests_running_.top();
-	if(run.depop_npc && run.owner->IsNPC()) {
+	RunningQuest run = m_running_quests.top();
+
+	if (run.depop_npc && run.owner->IsNPC()) {
 		//clear out any timers for them...
 		std::list<QuestTimer>::iterator cur = QTimerList.begin(), end;
 
 		end = QTimerList.end();
 		while (cur != end) {
-			if (cur->mob == run.owner)
+			if (cur->mob == run.owner) {
 				cur = QTimerList.erase(cur);
-			else
+			} else {
 				++cur;
+			}
 		}
 		run.owner->Depop();
 	}
-	quests_running_.pop();
+
+	m_running_quests.pop();
 }
 
 void QuestManager::ClearAllTimers() {
@@ -200,7 +198,7 @@ void QuestManager::summonitem(uint32 itemid, int16 charges) {
 
 void QuestManager::write(const char *file, const char *str) {
 	FILE * pFile;
-	pFile = fopen (fmt::format("{}/{}", path.GetServerPath(), file).c_str(), "a");
+	pFile = fopen (fmt::format("{}/{}", PathManager::Instance()->GetServerPath(), file).c_str(), "a");
 	if(!pFile)
 		return;
 	fprintf(pFile, "%s\n", str);
@@ -208,6 +206,15 @@ void QuestManager::write(const char *file, const char *str) {
 }
 
 Mob* QuestManager::spawn2(int npc_id, int grid, int unused, const glm::vec4& position) {
+	QuestManagerCurrentQuestVars();
+	if (owner && owner->IsNPC()) {
+		auto n = owner->CastToNPC();
+		if (n->IsResumedFromZoneSuspend()) {
+			LogZoneState("NPC [{}] is resuming from zone suspend, skipping quest call", n->GetCleanName());
+			return nullptr;
+		}
+	}
+
 	const NPCType* t = 0;
 	if (t = content_db.LoadNPCTypesData(npc_id)) {
 		auto npc = new NPC(t, nullptr, position, GravityBehavior::Water);
@@ -228,6 +235,15 @@ Mob* QuestManager::spawn2(int npc_id, int grid, int unused, const glm::vec4& pos
 }
 
 Mob* QuestManager::unique_spawn(int npc_type, int grid, int unused, const glm::vec4& position) {
+	QuestManagerCurrentQuestVars();
+	if (owner && owner->IsNPC()) {
+		auto n = owner->CastToNPC();
+		if (n->IsResumedFromZoneSuspend()) {
+			LogZoneState("NPC [{}] is resuming from zone suspend, skipping quest call", n->GetCleanName());
+			return nullptr;
+		}
+	}
+
 	Mob *other = entity_list.GetMobByNpcTypeID(npc_type);
 	if(other != nullptr) {
 		return other;
@@ -681,7 +697,7 @@ void QuestManager::stoptimer(const std::string& timer_name, Mob* m)
 	}
 
 	for (auto e = QTimerList.begin(); e != QTimerList.end(); ++e) {
-		if (e->mob && e->mob == m) {
+		if (e->mob && e->mob == m && e->name == timer_name) {
 			parse->EventMob(EVENT_TIMER_STOP, m, nullptr, [&]() { return timer_name; });
 
 			QTimerList.erase(e);
@@ -1079,18 +1095,18 @@ void QuestManager::depop(int npc_type) {
 					tmp->CastToNPC()->Depop();
 				}
 				else {
-					running_quest e = quests_running_.top();
+					RunningQuest e = m_running_quests.top();
 					e.depop_npc = true;
-					quests_running_.pop();
-					quests_running_.push(e);
+					m_running_quests.pop();
+					m_running_quests.push(e);
 				}
 			}
 		}
 		else {	//depop self
-			running_quest e = quests_running_.top();
+			RunningQuest e = m_running_quests.top();
 			e.depop_npc = true;
-			quests_running_.pop();
-			quests_running_.push(e);
+			m_running_quests.pop();
+			m_running_quests.push(e);
 		}
 	}
 }
@@ -1292,15 +1308,14 @@ void QuestManager::rename(std::string name) {
 	QuestManagerCurrentQuestVars();
 	if (initiator) {
 		std::string current_name = initiator->GetName();
-		if (initiator->ChangeFirstName(name.c_str(), current_name.c_str())) {
+		if (initiator->ChangeFirstName(name)) {
 			initiator->Message(
 				Chat::White,
 				fmt::format(
-					"Successfully renamed to {}, kicking to character select.",
+					"Successfully renamed to {}.",
 					name
 				).c_str()
 			);
-			initiator->Kick("Name was changed.");
 		} else {
 			initiator->Message(
 				Chat::Red,
@@ -1588,7 +1603,7 @@ void QuestManager::save() {
 
 void QuestManager::faction(int faction_id, int faction_value, int temp) {
 	QuestManagerCurrentQuestVars();
-	running_quest run = quests_running_.top();
+	RunningQuest run = m_running_quests.top();
 	if(run.owner->IsCharmed() == false && initiator) {
 		if(faction_id != 0 && faction_value != 0) {
 			initiator->SetFactionLevel2(
@@ -2059,10 +2074,10 @@ void QuestManager::respawn(int npcTypeID, int grid) {
 	if (!owner || !owner->IsNPC())
 		return;
 
-	running_quest e = quests_running_.top();
+	RunningQuest e = m_running_quests.top();
 	e.depop_npc = true;
-	quests_running_.pop();
-	quests_running_.push(e);
+	m_running_quests.pop();
+	m_running_quests.push(e);
 
 	const NPCType* npcType = nullptr;
 	if ((npcType = content_db.LoadNPCTypesData(npcTypeID)))
@@ -2769,7 +2784,7 @@ bool QuestManager::createBot(const char *name, const char *lastname, uint8 level
 
 		std::string test_name = name;
 		bool available_flag = false;
-		if (!database.botdb.QueryNameAvailablity(test_name, available_flag)) {
+		if (!database.botdb.QueryNameAvailability(test_name, available_flag)) {
 			initiator->Message(
 				Chat::White,
 				fmt::format(
@@ -2851,27 +2866,27 @@ bool QuestManager::createBot(const char *name, const char *lastname, uint8 level
 
 void QuestManager::taskselector(const std::vector<int>& tasks, bool ignore_cooldown) {
 	QuestManagerCurrentQuestVars();
-	if(RuleB(TaskSystem, EnableTaskSystem) && initiator && owner && task_manager)
+	if(RuleB(TaskSystem, EnableTaskSystem) && initiator && owner)
 		initiator->TaskQuestSetSelector(owner, tasks, ignore_cooldown);
 }
 void QuestManager::enabletask(int taskcount, int *tasks) {
 	QuestManagerCurrentQuestVars();
 
-	if(RuleB(TaskSystem, EnableTaskSystem) && initiator && task_manager)
+	if(RuleB(TaskSystem, EnableTaskSystem) && initiator)
 		initiator->EnableTask(taskcount, tasks);
 }
 
 void QuestManager::disabletask(int taskcount, int *tasks) {
 	QuestManagerCurrentQuestVars();
 
-	if(RuleB(TaskSystem, EnableTaskSystem) && initiator && task_manager)
+	if(RuleB(TaskSystem, EnableTaskSystem) && initiator)
 		initiator->DisableTask(taskcount, tasks);
 }
 
 bool QuestManager::istaskenabled(int taskid) {
 	QuestManagerCurrentQuestVars();
 
-	if(RuleB(TaskSystem, EnableTaskSystem) && initiator && task_manager)
+	if(RuleB(TaskSystem, EnableTaskSystem) && initiator)
 		return initiator->IsTaskEnabled(taskid);
 
 	return false;
@@ -2880,7 +2895,7 @@ bool QuestManager::istaskenabled(int taskid) {
 void QuestManager::tasksetselector(int tasksetid, bool ignore_cooldown) {
 	QuestManagerCurrentQuestVars();
 	Log(Logs::General, Logs::Tasks, "[UPDATE] TaskSetSelector called for task set %i", tasksetid);
-	if(RuleB(TaskSystem, EnableTaskSystem) && initiator && owner && task_manager)
+	if(RuleB(TaskSystem, EnableTaskSystem) && initiator && owner)
 		initiator->TaskSetSelector(owner, tasksetid, ignore_cooldown);
 }
 
@@ -2941,6 +2956,27 @@ void QuestManager::failtask(int taskid) {
 		initiator->FailTask(taskid);
 }
 
+bool QuestManager::completetask(int task_id) {
+	QuestManagerCurrentQuestVars();
+
+	if (!RuleB(TaskSystem, EnableTaskSystem) || !initiator) {
+		return false;
+
+	}
+
+	return initiator->CompleteTask(task_id);
+}
+
+bool QuestManager::uncompletetask(int task_id) {
+	QuestManagerCurrentQuestVars();
+
+	if (!RuleB(TaskSystem, EnableTaskSystem) || !initiator) {
+		return false;
+	}
+
+	return initiator->UncompleteTask(task_id);
+}
+
 int QuestManager::tasktimeleft(int taskid) {
 	QuestManagerCurrentQuestVars();
 
@@ -2962,8 +2998,8 @@ int QuestManager::enabledtaskcount(int taskset) {
 int QuestManager::firsttaskinset(int taskset) {
 	QuestManagerCurrentQuestVars();
 
-	if(RuleB(TaskSystem, EnableTaskSystem) && task_manager)
-		return task_manager->FirstTaskInSet(taskset);
+	if(RuleB(TaskSystem, EnableTaskSystem))
+		return TaskManager::Instance()->FirstTaskInSet(taskset);
 
 	return -1;
 }
@@ -2971,8 +3007,8 @@ int QuestManager::firsttaskinset(int taskset) {
 int QuestManager::lasttaskinset(int taskset) {
 	QuestManagerCurrentQuestVars();
 
-	if(RuleB(TaskSystem, EnableTaskSystem) && task_manager)
-		return task_manager->LastTaskInSet(taskset);
+	if(RuleB(TaskSystem, EnableTaskSystem))
+		return TaskManager::Instance()->LastTaskInSet(taskset);
 
 	return -1;
 }
@@ -2980,8 +3016,8 @@ int QuestManager::lasttaskinset(int taskset) {
 int QuestManager::nexttaskinset(int taskset, int taskid) {
 	QuestManagerCurrentQuestVars();
 
-	if(RuleB(TaskSystem, EnableTaskSystem) && task_manager)
-		return task_manager->NextTaskInSet(taskset, taskid);
+	if(RuleB(TaskSystem, EnableTaskSystem))
+		return TaskManager::Instance()->NextTaskInSet(taskset, taskid);
 
 	return -1;
 }
@@ -3046,8 +3082,8 @@ int QuestManager::completedtasksinset(int taskset) {
 bool QuestManager::istaskappropriate(int task) {
 	QuestManagerCurrentQuestVars();
 
-	if(RuleB(TaskSystem, EnableTaskSystem) && initiator && task_manager)
-		return task_manager->ValidateLevel(task, initiator->GetLevel());
+	if(RuleB(TaskSystem, EnableTaskSystem) && initiator)
+		return TaskManager::Instance()->ValidateLevel(task, initiator->GetLevel());
 
 	return false;
 }
@@ -3056,7 +3092,7 @@ std::string QuestManager::gettaskname(uint32 task_id) {
 	QuestManagerCurrentQuestVars();
 
 	if (RuleB(TaskSystem, EnableTaskSystem)) {
-		return task_manager->GetTaskName(task_id);
+		return TaskManager::Instance()->GetTaskName(task_id);
 	}
 
 	return std::string();
@@ -3065,8 +3101,8 @@ std::string QuestManager::gettaskname(uint32 task_id) {
 int QuestManager::GetCurrentDzTaskID() {
 	QuestManagerCurrentQuestVars();
 
-	if (RuleB(TaskSystem, EnableTaskSystem) && zone && task_manager) {
-		return task_manager->GetCurrentDzTaskID();
+	if (RuleB(TaskSystem, EnableTaskSystem) && zone) {
+		return TaskManager::Instance()->GetCurrentDzTaskID();
 	}
 
 	return 0;
@@ -3075,8 +3111,8 @@ int QuestManager::GetCurrentDzTaskID() {
 void QuestManager::EndCurrentDzTask(bool send_fail) {
 	QuestManagerCurrentQuestVars();
 
-	if (RuleB(TaskSystem, EnableTaskSystem) && zone && task_manager) {
-		task_manager->EndCurrentDzTask(send_fail);
+	if (RuleB(TaskSystem, EnableTaskSystem) && zone) {
+		TaskManager::Instance()->EndCurrentDzTask(send_fail);
 	}
 }
 
@@ -3489,6 +3525,7 @@ void QuestManager::UpdateInstanceTimer(uint16 instance_id, uint32 new_duration)
 
 	e.duration   = new_duration;
 	e.start_time = std::time(nullptr);
+	e.expire_at  = e.start_time + e.duration;
 
 	const int updated = InstanceListRepository::UpdateOne(database, e);
 
@@ -3940,81 +3977,90 @@ void QuestManager::ReloadZoneStaticData()
 	}
 }
 
-Client *QuestManager::GetInitiator() const {
-	if(!quests_running_.empty()) {
-		running_quest e = quests_running_.top();
+Client* QuestManager::GetInitiator() const
+{
+	if (!m_running_quests.empty()) {
+		RunningQuest e = m_running_quests.top();
 		return e.initiator;
 	}
 
 	return nullptr;
 }
 
-NPC *QuestManager::GetNPC() const {
-	if(!quests_running_.empty()) {
-		running_quest e = quests_running_.top();
+NPC* QuestManager::GetNPC() const
+{
+	if (!m_running_quests.empty()) {
+		RunningQuest e = m_running_quests.top();
 		return (e.owner && e.owner->IsNPC()) ? e.owner->CastToNPC() : nullptr;
 	}
 
 	return nullptr;
 }
 
-Bot *QuestManager::GetBot() const {
-	if (!quests_running_.empty()) {
-		running_quest e = quests_running_.top();
+Bot* QuestManager::GetBot() const
+{
+	if (!m_running_quests.empty()) {
+		RunningQuest e = m_running_quests.top();
 		return (e.owner && e.owner->IsBot()) ? e.owner->CastToBot() : nullptr;
 	}
 
 	return nullptr;
 }
 
-Merc *QuestManager::GetMerc() const {
-	if (!quests_running_.empty()) {
-		running_quest e = quests_running_.top();
+Merc* QuestManager::GetMerc() const
+{
+	if (!m_running_quests.empty()) {
+		RunningQuest e = m_running_quests.top();
 		return (e.owner && e.owner->IsMerc()) ? e.owner->CastToMerc() : nullptr;
 	}
 
 	return nullptr;
 }
 
-Mob *QuestManager::GetOwner() const {
-	if(!quests_running_.empty()) {
-		running_quest e = quests_running_.top();
+Mob* QuestManager::GetOwner() const
+{
+	if (!m_running_quests.empty()) {
+		RunningQuest e = m_running_quests.top();
 		return e.owner;
 	}
 
 	return nullptr;
 }
 
-EQ::InventoryProfile *QuestManager::GetInventory() const {
-	if(!quests_running_.empty()) {
-		running_quest e = quests_running_.top();
+EQ::InventoryProfile* QuestManager::GetInventory() const
+{
+	if (!m_running_quests.empty()) {
+		RunningQuest e = m_running_quests.top();
 		return &e.initiator->GetInv();
 	}
 
 	return nullptr;
 }
 
-EQ::ItemInstance *QuestManager::GetQuestItem() const {
-	if(!quests_running_.empty()) {
-		running_quest e = quests_running_.top();
+EQ::ItemInstance* QuestManager::GetQuestItem() const
+{
+	if (!m_running_quests.empty()) {
+		RunningQuest e = m_running_quests.top();
 		return e.questitem;
 	}
 
 	return nullptr;
 }
 
-const SPDat_Spell_Struct *QuestManager::GetQuestSpell() {
-	if(!quests_running_.empty()) {
-		running_quest e = quests_running_.top();
+const SPDat_Spell_Struct* QuestManager::GetQuestSpell()
+{
+	if (!m_running_quests.empty()) {
+		RunningQuest e = m_running_quests.top();
 		return e.questspell;
 	}
 
 	return nullptr;
 }
 
-std::string QuestManager::GetEncounter() const {
-	if(!quests_running_.empty()) {
-		running_quest e = quests_running_.top();
+std::string QuestManager::GetEncounter() const
+{
+	if (!m_running_quests.empty()) {
+		RunningQuest e = m_running_quests.top();
 		return e.encounter;
 	}
 
@@ -4620,4 +4666,34 @@ bool QuestManager::handin(std::map<std::string, uint32> required) {
 	}
 
 	return owner->CastToNPC()->CheckHandin(initiator, {}, required, {});
+}
+
+std::vector<std::string> QuestManager::GetPausedTimers(Mob* m)
+{
+	std::vector<std::string> v;
+
+	if (m && !PTimerList.empty()) {
+		for (auto e = PTimerList.begin(); e != PTimerList.end(); e++) {
+			if (e->owner == m) {
+				v.emplace_back(e->name);
+			}
+		}
+	}
+
+	return v;
+}
+
+std::vector<std::string> QuestManager::GetTimers(Mob* m)
+{
+	std::vector<std::string> v;
+
+	if (m && !QTimerList.empty()) {
+		for (auto e = QTimerList.begin(); e != QTimerList.end(); e++) {
+			if (e->mob == m) {
+				v.emplace_back(e->name);
+			}
+		}
+	}
+
+	return v;
 }

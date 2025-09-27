@@ -615,7 +615,7 @@ void Client::AI_SpellCast()
 			continue;
 		}
 
-		if(IsEffectInSpell(current_spell, SE_Charm))
+		if(IsEffectInSpell(current_spell, SpellEffect::Charm))
 		{
 			continue;
 		}
@@ -724,7 +724,7 @@ void Client::AI_Process()
 	{
 		if(!IsFeared() && !IsLD())
 		{
-			BuffFadeByEffect(SE_Charm);
+			BuffFadeByEffect(SpellEffect::Charm);
 			return;
 		}
 	}
@@ -1397,8 +1397,8 @@ void Mob::AI_Process() {
 		else if (AI_movement_timer->Check() && !IsRooted()) {
 			if (IsPet()) {
 				// we're a pet, do as we're told
-				switch (pStandingPetOrder) {
-					case SPO_Follow: {
+				switch (m_pet_order) {
+					case PetOrder::Follow: {
 
 						Mob *owner = GetOwner();
 						if (owner == nullptr) {
@@ -1447,18 +1447,18 @@ void Mob::AI_Process() {
 
 						break;
 					}
-					case SPO_Sit: {
+					case PetOrder::Sit: {
 						SetAppearance(eaSitting, false);
 						break;
 					}
-					case SPO_Guard: {
+					case PetOrder::Guard: {
 						//only NPCs can guard stuff. (forced by where the guard movement code is in the AI)
 						if (IsNPC()) {
 							CastToNPC()->NextGuardPosition();
 						}
 						break;
 					}
-					case SPO_FeignDeath: {
+					case PetOrder::Feign: {
 						SetAppearance(eaDead, false);
 						break;
 					}

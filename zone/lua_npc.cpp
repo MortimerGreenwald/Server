@@ -9,6 +9,7 @@
 #include "lua_client.h"
 #include "lua_item.h"
 #include "lua_iteminst.h"
+#include "lua_spawn.h"
 
 struct Lua_NPC_Loot_List {
 	std::vector<uint32> entries;
@@ -932,6 +933,30 @@ void Lua_NPC::ReturnHandinItems(Lua_Client c)
 	self->ReturnHandinItems(c);
 }
 
+Lua_Spawn Lua_NPC::GetSpawn(lua_State* L)
+{
+	Lua_Safe_Call_Class(Lua_Spawn);
+	return Lua_Spawn(self->GetSpawn());
+}
+
+bool Lua_NPC::IsResumedFromZoneSuspend()
+{
+	Lua_Safe_Call_Bool();
+	return self->IsResumedFromZoneSuspend();
+}
+
+void Lua_NPC::SetNPCTintIndex(uint32 index)
+{
+	Lua_Safe_Call_Void();
+	self->SetNPCTintIndex(index);
+}
+
+uint32 Lua_NPC::GetNPCTintIndex()
+{
+	Lua_Safe_Call_Int();
+	return self->GetNPCTintIndex();
+}
+
 luabind::scope lua_register_npc() {
 	return luabind::class_<Lua_NPC, Lua_Mob>("NPC")
 	.def(luabind::constructor<>())
@@ -999,6 +1024,7 @@ luabind::scope lua_register_npc() {
 	.def("GetNPCSpellsEffectsID", (uint32(Lua_NPC::*)(void))&Lua_NPC::GetNPCSpellsEffectsID)
 	.def("GetNPCSpellsID", (uint32(Lua_NPC::*)(void))&Lua_NPC::GetNPCSpellsID)
 	.def("GetNPCStat", (float(Lua_NPC::*)(std::string))&Lua_NPC::GetNPCStat)
+	.def("GetNPCTintIndex", (uint32(Lua_NPC::*)(void))&Lua_NPC::GetNPCTintIndex)
 	.def("GetPetSpellID", (int(Lua_NPC::*)(void))&Lua_NPC::GetPetSpellID)
 	.def("GetPlatinum", (uint32(Lua_NPC::*)(void))&Lua_NPC::GetPlatinum)
 	.def("GetPrimSkill", (int(Lua_NPC::*)(void))&Lua_NPC::GetPrimSkill)
@@ -1009,6 +1035,7 @@ luabind::scope lua_register_npc() {
 	.def("GetSilver", (uint32(Lua_NPC::*)(void))&Lua_NPC::GetSilver)
 	.def("GetSlowMitigation", (int(Lua_NPC::*)(void))&Lua_NPC::GetSlowMitigation)
 	.def("GetSp2", (uint32(Lua_NPC::*)(void))&Lua_NPC::GetSp2)
+	.def("GetSpawn", (Lua_Spawn(Lua_NPC::*)(void))&Lua_NPC::GetSpawn)
 	.def("GetSpawnKillCount", (int(Lua_NPC::*)(void))&Lua_NPC::GetSpawnKillCount)
 	.def("GetSpawnPointH", (float(Lua_NPC::*)(void))&Lua_NPC::GetSpawnPointH)
 	.def("GetSpawnPointID", (int(Lua_NPC::*)(void))&Lua_NPC::GetSpawnPointID)
@@ -1032,6 +1059,7 @@ luabind::scope lua_register_npc() {
 	.def("IsOnHatelist", (bool(Lua_NPC::*)(Lua_Mob))&Lua_NPC::IsOnHatelist)
 	.def("IsRaidTarget", (bool(Lua_NPC::*)(void))&Lua_NPC::IsRaidTarget)
 	.def("IsRareSpawn", (bool(Lua_NPC::*)(void))&Lua_NPC::IsRareSpawn)
+	.def("IsResumedFromZoneSuspend",(bool(Lua_NPC::*)(void))&Lua_NPC::IsResumedFromZoneSuspend)
 	.def("IsTaunting", (bool(Lua_NPC::*)(void))&Lua_NPC::IsTaunting)
 	.def("IsUnderwaterOnly", (bool(Lua_NPC::*)(void))&Lua_NPC::IsUnderwaterOnly)
 	.def("MerchantCloseShop", (void(Lua_NPC::*)(void))&Lua_NPC::MerchantCloseShop)
@@ -1076,6 +1104,7 @@ luabind::scope lua_register_npc() {
 	.def("SetLDoNTrapType", (void(Lua_NPC::*)(uint8))&Lua_NPC::SetLDoNTrapType)
 	.def("SetNPCAggro", (void(Lua_NPC::*)(bool))&Lua_NPC::SetNPCAggro)
 	.def("SetNPCFactionID", (void(Lua_NPC::*)(int))&Lua_NPC::SetNPCFactionID)
+	.def("SetNPCTintIndex", &Lua_NPC::SetNPCTintIndex)
 	.def("SetPetSpellID", (void(Lua_NPC::*)(int))&Lua_NPC::SetPetSpellID)
 	.def("SetPlatinum", (void(Lua_NPC::*)(uint32))&Lua_NPC::SetPlatinum)
 	.def("SetPrimSkill", (void(Lua_NPC::*)(int))&Lua_NPC::SetPrimSkill)

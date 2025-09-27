@@ -57,7 +57,6 @@ extern QueryServ* QServ;
 extern Zone* zone;
 extern volatile bool is_zone_loaded;
 extern WorldServer worldserver;
-extern PetitionList petition_list;
 extern EntityList entity_list;
 
 bool Client::Process() {
@@ -217,6 +216,8 @@ bool Client::Process() {
 				GetMerc()->Depop();
 			}
 			instalog = true;
+
+			camp_timer.Disable();
 		}
 
 		if (IsStunned() && stunned_timer.Check())
@@ -534,6 +535,10 @@ bool Client::Process() {
 			DoEnduranceRegen();
 			BuffProcess();
 
+			if (auto_attack) {
+				ResetAFKTimer();
+			}
+
 			if (tribute_timer.Check()) {
 				ToggleTribute(true);	//re-activate the tribute.
 			}
@@ -555,6 +560,10 @@ bool Client::Process() {
 			if (ItemQuestTimer.Check())
 			{
 				ItemTimerCheck();
+			}
+
+			if (m_clear_wearchange_cache_timer.Check()) {
+				m_last_seen_wearchange.clear();
 			}
 		}
 	}
@@ -725,7 +734,7 @@ void Client::OnDisconnect(bool hard_disconnect) {
 		o->trade->Reset();
 	}
 
-	database.SetFirstLogon(CharacterID(), 0); //We change firstlogon status regardless of if a player logs out to zone or not, because we only want to trigger it on their first login from world.
+	database.SetIngame(CharacterID(), 0); //We change ingame status regardless of if a player logs out to zone or not, because we only want to trigger it on their first login from world.
 
 	/* Remove from all proximities */
 	ClearAllProximities();
@@ -1578,7 +1587,7 @@ void Client::OPMoveCoin(const EQApplicationPacket* app)
 				if (from_bucket == &m_pp.platinum_shared)
 					amount_to_add = 0 - amount_to_take;
 
-				database.SetSharedPlatinum(AccountID(),amount_to_add);
+				database.AddSharedPlatinum(AccountID(),amount_to_add);
 			}
 		}
 		else{
@@ -1655,7 +1664,7 @@ void Client::OPGMTraining(const EQApplicationPacket *app)
 //#pragma GCC push_options
 //#pragma GCC optimize ("O0")
 	for (int sk = EQ::skills::Skill1HBlunt; sk <= EQ::skills::HIGHEST_SKILL; ++sk) {
-		if (sk == EQ::skills::SkillTinkering && GetRace() != GNOME) {
+		if (sk == EQ::skills::SkillTinkering && GetRace() != Race::Gnome) {
 			gmtrain->skills[sk] = 0; //Non gnomes can't tinker!
 		} else {
 			gmtrain->skills[sk] = GetMaxSkillAfterSpecializationRules((EQ::skills::SkillType)sk, MaxSkill((EQ::skills::SkillType)sk, GetClass(), RuleI(Character, MaxLevel)));

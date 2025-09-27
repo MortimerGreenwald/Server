@@ -130,7 +130,7 @@ void bot_command_clone(Client *c, const Seperator *sep)
 
 	bool available_flag = false;
 
-	!database.botdb.QueryNameAvailablity(bot_name, available_flag);
+	!database.botdb.QueryNameAvailability(bot_name, available_flag);
 
 	if (!available_flag) {
 		c->Message(
@@ -144,55 +144,25 @@ void bot_command_clone(Client *c, const Seperator *sep)
 		return;
 	}
 
-	auto bot_creation_limit = c->GetBotCreationLimit();
-	auto bot_creation_limit_class = c->GetBotCreationLimit(my_bot->GetClass());
-
 	uint32 bot_count = 0;
 	uint32 bot_class_count = 0;
+
 	if (!database.botdb.QueryBotCount(c->CharacterID(), my_bot->GetClass(), bot_count, bot_class_count)) {
-		c->Message(Chat::White, "Failed to query bot count.");
+		c->Message(Chat::Yellow, "Failed to query bot count.");
+
 		return;
 	}
 
-	if (bot_creation_limit >= 0 && bot_count >= bot_creation_limit) {
-		std::string message;
-
-		if (bot_creation_limit) {
-			message =  fmt::format(
-				"You have reached the maximum limit of {} bot{}.",
-				bot_creation_limit,
-				bot_creation_limit != 1 ? "s" : ""
-			);
-		} else {
-			message = "You cannot create any bots.";
-		}
-
-		c->Message(Chat::White, message.c_str());
+	if (!Bot::CheckCreateLimit(c, bot_count)) {
 		return;
 	}
 
-	if (bot_creation_limit_class >= 0 && bot_class_count >= bot_creation_limit_class) {
-		std::string message;
-
-		if (bot_creation_limit_class) {
-			message = fmt::format(
-				"You cannot create anymore than {} {} bot{}.",
-				bot_creation_limit_class,
-				GetClassIDName(my_bot->GetClass()),
-				bot_creation_limit_class != 1 ? "s" : ""
-			);
-		} else {
-			message = fmt::format(
-				"You cannot create any {} bots.",
-				GetClassIDName(my_bot->GetClass())
-			);
-		}
-
-		c->Message(Chat::White, message.c_str());
+	if (!Bot::CheckCreateLimit(c, bot_class_count, my_bot->GetClass())) {
 		return;
 	}
 
 	uint32 clone_id = 0;
+
 	if (!database.botdb.CreateCloneBot(my_bot->GetBotID(), bot_name, clone_id) || !clone_id) {
 		c->Message(
 			Chat::White,
@@ -205,6 +175,7 @@ void bot_command_clone(Client *c, const Seperator *sep)
 	}
 
 	int clone_stance = Stance::Passive;
+
 	if (!database.botdb.LoadStance(my_bot->GetBotID(), clone_stance)) {
 		c->Message(
 			Chat::White,
@@ -484,13 +455,13 @@ void bot_command_follow_distance(Client *c, const Seperator *sep)
 			fmt::format("- You must use a value between 1 and {}.", RuleI(Bots, MaxFollowDistance))
 		};
 		p.example_format = { fmt::format("{} [reset]/[set [value]] [actionable]", sep->arg[0]) };
-		p.examples_one = { 
-			"To set all bots to follow at a distance of 25:", 
-			fmt::format("{} set 25 spawned", sep->arg[0]) 
+		p.examples_one = {
+			"To set all bots to follow at a distance of 25:",
+			fmt::format("{} set 25 spawned", sep->arg[0])
 		};
-		p.examples_two = { 
-			"To check the curret following distance of all bots:", 
-			fmt::format("{} current spawned", sep->arg[0]) 
+		p.examples_two = {
+			"To check the curret following distance of all bots:",
+			fmt::format("{} current spawned", sep->arg[0])
 		};
 		p.examples_three =
 		{
@@ -499,10 +470,10 @@ void bot_command_follow_distance(Client *c, const Seperator *sep)
 				"{} reset byclass {}",
 				sep->arg[0],
 				Class::Wizard
-			) 
+			)
 		};
 		p.actionables = { "target, byname, ownergroup, ownerraid, targetgroup, namesgroup, healrotationtargets, mmr, byclass, byrace, spawned" };
-		
+
 		std::string popup_text = c->SendBotCommandHelpWindow(p);
 		popup_text = DialogueWindow::Table(popup_text);
 
@@ -512,7 +483,7 @@ void bot_command_follow_distance(Client *c, const Seperator *sep)
 	}
 
 	const int ab_mask = ActionableBots::ABM_Type2;
-	
+
 	uint32 bfd = RuleI(Bots, DefaultFollowDistance);
 	bool set_flag = false;
 	bool current_check = false;
@@ -729,6 +700,7 @@ void bot_command_list_bots(Client *c, const Seperator *sep)
 		return;
 	}
 
+    int NO_BOT_LIMIT = -1;
 	bool Account = false;
 	int seps = 1;
 	uint32 filter_value[FilterCount];
@@ -867,7 +839,7 @@ void bot_command_list_bots(Client *c, const Seperator *sep)
 		for (uint8 class_id = Class::Warrior; class_id <= Class::Berserker; class_id++) {
 			auto class_creation_limit = c->GetBotCreationLimit(class_id);
 
-			if (class_creation_limit != overall_bot_creation_limit) {
+			if (class_creation_limit != NO_BOT_LIMIT && class_creation_limit != overall_bot_creation_limit) {
 				c->Message(
 					Chat::White,
 					fmt::format(
@@ -890,7 +862,7 @@ void bot_command_report(Client *c, const Seperator *sep)
 		c->Message(Chat::White, "usage: %s ([actionable: target | byname | ownergroup | ownerraid | targetgroup | namesgroup | healrotationmembers | healrotationtargets | mmr | byclass | byrace | spawned] ([actionable_name]))", sep->arg[0]);
 		return;
 	}
-	
+
 	const int ab_mask = ActionableBots::ABM_Type1;
 
 	std::string arg1 = sep->arg[1];
@@ -938,20 +910,7 @@ void bot_command_spawn(Client *c, const Seperator *sep)
 		return;
 	}
 
-	auto bot_character_level = c->GetBotRequiredLevel();
-
-	if (
-		bot_character_level >= 0 &&
-		c->GetLevel() < bot_character_level &&
-		!c->GetGM()
-		) {
-		c->Message(
-			Chat::White,
-			fmt::format(
-				"You must be level {} to spawn bots.",
-				bot_character_level
-			).c_str()
-		);
+	if (!Bot::CheckHighEnoughLevelForBots(c)) {
 		return;
 	}
 
@@ -959,27 +918,7 @@ void bot_command_spawn(Client *c, const Seperator *sep)
 		return;
 	}
 
-	auto bot_spawn_limit = c->GetBotSpawnLimit();
-	auto spawned_bot_count = Bot::SpawnedBotCount(c->CharacterID());
-
-	if (
-		bot_spawn_limit >= 0 &&
-		spawned_bot_count >= bot_spawn_limit &&
-		!c->GetGM()
-	) {
-		std::string message;
-
-		if (bot_spawn_limit) {
-			message = fmt::format(
-				"You cannot have more than {} spawned bot{}.",
-				bot_spawn_limit,
-				bot_spawn_limit != 1 ? "s" : ""
-			);
-		} else {
-			message = "You are not currently allowed to spawn any bots.";
-		}
-
-		c->Message(Chat::White, message.c_str());
+	if (!Bot::CheckSpawnLimit(c)) {
 		return;
 	}
 
@@ -1004,52 +943,6 @@ void bot_command_spawn(Client *c, const Seperator *sep)
 		return;
 	}
 
-	auto bot_spawn_limit_class = c->GetBotSpawnLimit(bot_class);
-	auto spawned_bot_count_class = Bot::SpawnedBotCount(c->CharacterID(), bot_class);
-
-	if (
-		bot_spawn_limit_class >= 0 &&
-		spawned_bot_count_class >= bot_spawn_limit_class &&
-		!c->GetGM()
-	) {
-		std::string message;
-
-		if (bot_spawn_limit_class) {
-			message = fmt::format(
-				"You cannot have more than {} spawned {} bot{}.",
-				bot_spawn_limit_class,
-				GetClassIDName(bot_class),
-				bot_spawn_limit_class != 1 ? "s" : ""
-			);
-		} else {
-			message = fmt::format(
-				"You are not currently allowed to spawn any {} bots.",
-				GetClassIDName(bot_class)
-			);
-		}
-
-		c->Message(Chat::White, message.c_str());
-		return;
-	}
-
-	auto bot_character_level_class = c->GetBotRequiredLevel(bot_class);
-
-	if (
-		bot_character_level_class >= 0 &&
-		c->GetLevel() < bot_character_level_class &&
-		!c->GetGM()
-	) {
-		c->Message(
-			Chat::White,
-			fmt::format(
-				"You must be level {} to spawn {} bots.",
-				bot_character_level_class,
-				GetClassIDName(bot_class)
-			).c_str()
-		);
-		return;
-	}
-
 	if (!bot_id) {
 		c->Message(
 			Chat::White,
@@ -1061,6 +954,14 @@ void bot_command_spawn(Client *c, const Seperator *sep)
 		return;
 	}
 
+	if (!Bot::CheckHighEnoughLevelForBots(c, bot_class)) {
+		return;
+	}
+
+	if (!Bot::CheckSpawnLimit(c, bot_class)) {
+		return;
+	}
+
 	if (entity_list.GetMobByBotID(bot_id)) {
 		c->Message(
 			Chat::White,
@@ -1069,6 +970,7 @@ void bot_command_spawn(Client *c, const Seperator *sep)
 				bot_name
 			).c_str()
 		);
+
 		return;
 	}
 
@@ -1083,6 +985,7 @@ void bot_command_spawn(Client *c, const Seperator *sep)
 				bot_id
 			).c_str()
 		);
+
 		return;
 	}
 
@@ -1097,6 +1000,7 @@ void bot_command_spawn(Client *c, const Seperator *sep)
 		);
 
 		safe_delete(my_bot);
+
 		return;
 	}
 
@@ -1121,6 +1025,7 @@ void bot_command_spawn(Client *c, const Seperator *sep)
 	};
 
 	uint8 message_index = 0;
+
 	if (c->GetBotOption(Client::booSpawnMessageClassSpecific)) {
 		message_index = VALIDATECLASSID(my_bot->GetClass());
 	}
@@ -1152,7 +1057,7 @@ void bot_command_stance(Client *c, const Seperator *sep)
 		BotCommandHelpParams p;
 
 		p.description = { "Change a bot's stance to control the way it behaves." };
-		p.notes = 
+		p.notes =
 		{
 			"- Changing a stance will reset all settings to match that stance type.",
 			"- Any changes made will only save to that stance for future use.",
@@ -1217,29 +1122,29 @@ void bot_command_stance(Client *c, const Seperator *sep)
 				Stance::AEBurn
 			)
 		};
-		p.example_format = 
+		p.example_format =
 		{ fmt::format( "{} [current | value]", sep->arg[0]) };
-		p.examples_one = 
-		{ 
-			"To set all bots to BurnAE:", 
+		p.examples_one =
+		{
+			"To set all bots to BurnAE:",
 			fmt::format("{} {} spawned {}",
 				sep->arg[0],
 				Stance::Aggressive,
 				Class::ShadowKnight
 			)
 		};
-		p.examples_two = 
-		{ 
-			"To set all Shadowknights to Aggressive:", 
+		p.examples_two =
+		{
+			"To set all Shadowknights to Aggressive:",
 			fmt::format("{} {} byclass {}",
 				sep->arg[0],
 				Stance::Aggressive,
 				Class::ShadowKnight
 			)
 		};
-		p.examples_three = { 
-			"To check the current stances of all bots:", 
-			fmt::format("{} current spawned", sep->arg[0]) 
+		p.examples_three = {
+			"To check the current stances of all bots:",
+			fmt::format("{} current spawned", sep->arg[0])
 		};
 
 		p.actionables = { "target, byname, ownergroup, ownerraid, targetgroup, namesgroup, healrotationtargets, mmr, byclass, byrace, spawned" };
@@ -1334,7 +1239,7 @@ void bot_command_stance(Client *c, const Seperator *sep)
 		database.botdb.LoadBotSettings(bot_iter);
 
 		if (
-			(bot_iter->GetClass() == Class::Warrior || bot_iter->GetClass() == Class::Paladin || bot_iter->GetClass() == Class::ShadowKnight) && 
+			(bot_iter->GetClass() == Class::Warrior || bot_iter->GetClass() == Class::Paladin || bot_iter->GetClass() == Class::ShadowKnight) &&
 			(bot_iter->GetBotStance() == Stance::Aggressive)
 		) {
 			bot_iter->SetTaunting(true);
@@ -1350,7 +1255,7 @@ void bot_command_stance(Client *c, const Seperator *sep)
 				bot_iter->GetPet()->CastToNPC()->SetTaunting(false);
 			}
 		}
-	
+
 		bot_iter->Save();
 		++success_count;
 	}
@@ -1526,7 +1431,7 @@ void bot_command_summon(Client *c, const Seperator *sep)
 		c->Message(Chat::White, "usage: %s ([actionable: target | byname | ownergroup | ownerraid | targetgroup | namesgroup | healrotationtargets | mmr | byclass | byrace | spawned] ([actionable_name]))", sep->arg[0]);
 		return;
 	}
-	
+
 	const int ab_mask = ActionableBots::ABM_Type1;
 
 	std::string arg1 = sep->arg[1];
@@ -1560,8 +1465,11 @@ void bot_command_summon(Client *c, const Seperator *sep)
 			continue;
 		}
 
-		bot_iter->GetPet()->WipeHateList();
-		bot_iter->GetPet()->SetTarget(nullptr);
+		if (bot_iter->HasControllablePet(BotAnimEmpathy::BackOff)) {
+			bot_iter->GetPet()->WipeHateList();
+			bot_iter->GetPet()->SetTarget(nullptr);
+		}
+
 		bot_iter->GetPet()->Teleport(c->GetPosition());
 	}
 
@@ -1642,7 +1550,7 @@ void bot_command_toggle_ranged(Client *c, const Seperator *sep)
 
 		return;
 	}
-	
+
 	std::string arg1 = sep->arg[1];
 
 	int ab_arg = 1;
@@ -1804,7 +1712,7 @@ void bot_command_toggle_helm(Client *c, const Seperator *sep)
 
 		return;
 	}
-	
+
 	std::string arg1 = sep->arg[1];
 
 	int ab_arg = 1;

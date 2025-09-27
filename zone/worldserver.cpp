@@ -68,7 +68,6 @@ extern Zone                  *zone;
 extern volatile bool          is_zone_loaded;
 extern void                   Shutdown();
 extern WorldServer            worldserver;
-extern PetitionList           petition_list;
 extern uint32                 numclients;
 extern volatile bool          RunLoops;
 extern QuestParserCollection *parse;
@@ -81,7 +80,6 @@ WorldServer::WorldServer()
 	cur_groupid = 0;
 	last_groupid = 0;
 	oocmuted = false;
-	m_process_timer = std::make_unique<EQ::Timer>(1000, true, std::bind(&WorldServer::Process, this));
 }
 
 WorldServer::~WorldServer() {
@@ -95,6 +93,7 @@ void WorldServer::Process()
 			if (it->second.reload_at_unix < std::time(nullptr)) {
 				ProcessReload(it->second);
 				it = m_reload_queue.erase(it);
+				break;
 			} else {
 				++it;
 			}
@@ -230,7 +229,7 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 			LogInfo("World assigned Port [{}] for this zone", sci->port);
 			ZoneConfig::SetZonePort(sci->port);
 
-			LogSys.SetDiscordHandler(&Zone::DiscordWebhookMessageHandler);
+			EQEmuLogSys::Instance()->SetDiscordHandler(&Zone::DiscordWebhookMessageHandler);
 		}
 		break;
 	}
@@ -911,8 +910,8 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 		std::cout << "Got Server Requested Petition List Refresh" << std::endl;
 		ServerPetitionUpdate_Struct* sus = (ServerPetitionUpdate_Struct*)pack->pBuffer;
 		// this was typoed to = instead of ==, not that it acts any different now though..
-		if (sus->status == 0) petition_list.ReadDatabase();
-		else if (sus->status == 1) petition_list.ReadDatabase(); // Until I fix this to be better....
+		if (sus->status == 0) PetitionList::Instance()->ReadDatabase();
+		else if (sus->status == 1) PetitionList::Instance()->ReadDatabase(); // Until I fix this to be better....
 		break;
 	}
 	case ServerOP_RezzPlayer: {
@@ -958,7 +957,7 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 
 				LogSpells("[WorldServer::HandleMessage] Found corpse. Marking corpse as rezzed if needed");
 				// I don't know why Rezzed is not set to true in CompleteRezz().
-				if (!IsEffectInSpell(srs->rez.spellid, SE_SummonToCorpse)) {
+				if (!IsEffectInSpell(srs->rez.spellid, SpellEffect::SummonToCorpse)) {
 					corpse->IsRezzed(true);
 					corpse->CompleteResurrection();
 				}
@@ -3140,7 +3139,6 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 	case ServerOP_WWMarquee:
 	{
 		auto s = (WWMarquee_Struct*) pack->pBuffer;
-
 		for (const auto& c : entity_list.GetClientList()) {
 			if (
 				c.second->Admin() >= s->min_status &&
@@ -3410,6 +3408,7 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 	case ServerOP_DzRemoveAllMembers:
 	case ServerOP_DzDurationUpdate:
 	case ServerOP_DzGetMemberStatuses:
+	case ServerOP_DzGetBulkMemberStatuses:
 	case ServerOP_DzSetCompass:
 	case ServerOP_DzSetSafeReturn:
 	case ServerOP_DzSetZoneIn:
@@ -3785,8 +3784,15 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 				return;
 			}
 
+			if (trader_pc->IsThereACustomer()) {
+				auto customer = entity_list.GetClientByID(trader_pc->GetCustomerID());
+				if (customer) {
+					customer->CancelTraderTradeWindow();
+				}
+			}
+
 			auto item_sn = Strings::ToUnsignedBigInt(in->trader_buy_struct.serial_number);
-			auto outapp  = std::make_unique<EQApplicationPacket>(OP_Trader, sizeof(TraderBuy_Struct));
+			auto outapp  = std::make_unique<EQApplicationPacket>(OP_Trader, static_cast<uint32>(sizeof(TraderBuy_Struct)));
 			auto data    = (TraderBuy_Struct *) outapp->pBuffer;
 
 			memcpy(data, &in->trader_buy_struct, sizeof(TraderBuy_Struct));
@@ -3799,7 +3805,7 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 
 			auto item = trader_pc->FindTraderItemBySerialNumber(item_sn);
 
-			if (player_event_logs.IsEventEnabled(PlayerEvent::TRADER_SELL)) {
+			if (item && PlayerEventLogs::Instance()->IsEventEnabled(PlayerEvent::TRADER_SELL)) {
 				auto e = PlayerEvent::TraderSellEvent{
 					.item_id              = item ? item->GetID() : 0,
 					.augment_1_id         = item->GetAugmentItemID(0),
@@ -3833,7 +3839,7 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 				case Barter_AddToBarterWindow: {
 					auto outapp = std::make_unique<EQApplicationPacket>(
 						OP_Barter,
-						sizeof(BuyerAddBuyertoBarterWindow_Struct)
+						static_cast<uint32>(sizeof(BuyerAddBuyertoBarterWindow_Struct))
 					);
 					auto emu    = (BuyerAddBuyertoBarterWindow_Struct *) outapp->pBuffer;
 
@@ -3850,7 +3856,7 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 				case Barter_RemoveFromBarterWindow: {
 					auto outapp = std::make_unique<EQApplicationPacket>(
 						OP_Barter,
-						sizeof(BuyerRemoveBuyerFromBarterWindow_Struct)
+						static_cast<uint32>(sizeof(BuyerRemoveBuyerFromBarterWindow_Struct))
 					);
 					auto emu    = (BuyerRemoveBuyerFromBarterWindow_Struct *) outapp->pBuffer;
 
@@ -3895,7 +3901,7 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 									Barter_Failure
 								);
 
-								if (player_event_logs.IsEventEnabled(PlayerEvent::BARTER_TRANSACTION)) {
+								if (PlayerEventLogs::Instance()->IsEventEnabled(PlayerEvent::BARTER_TRANSACTION)) {
 									PlayerEvent::BarterTransaction e{};
 									e.status        = "Failed Barter Transaction";
 									e.item_id       = sell_line.item_id;
@@ -3932,7 +3938,7 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 									Barter_Failure
 								);
 
-								if (player_event_logs.IsEventEnabled(PlayerEvent::BARTER_TRANSACTION)) {
+								if (PlayerEventLogs::Instance()->IsEventEnabled(PlayerEvent::BARTER_TRANSACTION)) {
 									PlayerEvent::BarterTransaction e{};
 									e.status        = "Failed Barter Transaction";
 									e.item_id       = sell_line.item_id;
@@ -3979,6 +3985,12 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 						in->sub_action = Barter_BuyerCouldNotBeFound;
 						worldserver.SendPacket(pack);
 						return;
+					}
+					if (buyer->IsThereACustomer()) {
+						auto customer = entity_list.GetClientByID(buyer->GetCustomerID());
+						if (customer) {
+							customer->CancelBuyerTradeWindow();
+						}
 					}
 
 					BuyerLineSellItem_Struct sell_line{};
@@ -4053,7 +4065,7 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 						Barter_Success
 					);
 
-					if (player_event_logs.IsEventEnabled(PlayerEvent::BARTER_TRANSACTION)) {
+					if (PlayerEventLogs::Instance()->IsEventEnabled(PlayerEvent::BARTER_TRANSACTION)) {
 						PlayerEvent::BarterTransaction e{};
 						e.status        = "Successful Barter Transaction";
 						e.item_id       = sell_line.item_id;
@@ -4111,7 +4123,7 @@ void WorldServer::HandleMessage(uint16 opcode, const EQ::Net::Packet &p)
 						Barter_Success
 					);
 
-					if (player_event_logs.IsEventEnabled(PlayerEvent::BARTER_TRANSACTION)) {
+					if (PlayerEventLogs::Instance()->IsEventEnabled(PlayerEvent::BARTER_TRANSACTION)) {
 						PlayerEvent::BarterTransaction e{};
 						e.status        = "Successful Barter Transaction";
 						e.item_id       = sell_line.item_id;
@@ -4264,7 +4276,7 @@ bool WorldServer::SendVoiceMacro(Client* From, uint32 Type, char* Target, uint32
 
 	uint16 player_race = GetPlayerRaceValue(From->GetRace());
 
-	if (player_race == PLAYER_RACE_UNKNOWN) {
+	if (player_race == Race::Doug) {
 		player_race = From->GetBaseRace();
 	}
 
@@ -4559,7 +4571,7 @@ void WorldServer::ProcessReload(const ServerReload::Request& request)
 			break;
 
 		case ServerReload::Type::ContentFlags:
-			content_service.SetExpansionContext()->ReloadContentFlags();
+			WorldContentService::Instance()->SetExpansionContext()->ReloadContentFlags();
 			break;
 
 		case ServerReload::Type::DzTemplates:
@@ -4577,12 +4589,16 @@ void WorldServer::ProcessReload(const ServerReload::Request& request)
 			break;
 
 		case ServerReload::Type::Logs:
-			LogSys.LoadLogDatabaseSettings();
-			player_event_logs.ReloadSettings();
+			EQEmuLogSys::Instance()->LoadLogDatabaseSettings();
+			PlayerEventLogs::Instance()->ReloadSettings();
 			break;
 
 		case ServerReload::Type::Loot:
 			zone->ReloadLootTables();
+			break;
+
+		case ServerReload::Type::Maps:
+			zone->ReloadMaps();
 			break;
 
 		case ServerReload::Type::Merchants:
@@ -4609,7 +4625,7 @@ void WorldServer::ProcessReload(const ServerReload::Request& request)
 			break;
 
 		case ServerReload::Type::SkillCaps:
-			skill_caps.ReloadSkillCaps();
+			SkillCaps::Instance()->ReloadSkillCaps();
 			break;
 
 		case ServerReload::Type::DataBucketsCache:
@@ -4626,11 +4642,9 @@ void WorldServer::ProcessReload(const ServerReload::Request& request)
 		case ServerReload::Type::Tasks:
 			if (RuleB(Tasks, EnableTaskSystem)) {
 				entity_list.SaveAllClientsTaskState();
-				safe_delete(task_manager);
-				task_manager = new TaskManager;
-				task_manager->LoadTasks();
+				TaskManager::Instance()->LoadTasks();
 				entity_list.ReloadAllClientsTaskState();
-				task_manager->LoadTaskSets();
+				TaskManager::Instance()->LoadTaskSets();
 			}
 			break;
 
@@ -4682,7 +4696,7 @@ void WorldServer::ProcessReload(const ServerReload::Request& request)
 			break;
 
 		case ServerReload::Type::ZoneData:
-			zone_store.LoadZones(content_db);
+			ZoneStore::Instance()->LoadZones(content_db);
 			zone->LoadZoneCFG(zone->GetShortName(), zone->GetInstanceVersion());
 			break;
 

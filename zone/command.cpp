@@ -19,7 +19,7 @@
 #include "../common/file.h"
 #include "../common/repositories/dynamic_zones_repository.h"
 
-#include "data_bucket.h"
+#include "../common/data_bucket.h"
 #include "command.h"
 #include "dynamic_zone.h"
 #include "queryserv.h"
@@ -34,7 +34,6 @@
 
 extern QueryServ* QServ;
 extern WorldServer worldserver;
-extern TaskManager *task_manager;
 extern FastMath g_Math;
 void CatchSignal(int sig_num);
 
@@ -245,7 +244,8 @@ int command_init(void)
 		command_add("zonebootup", "[ZoneServerID] [shortname] - Make a zone server boot a specific zone", AccountStatus::GMLeadAdmin, command_zonebootup) ||
 		command_add("zoneinstance", "[Instance ID] [X] [Y] [Z] - Teleport to specified Instance by ID (coordinates are optional)", AccountStatus::Guide, command_zone_instance) ||
 		command_add("zoneshard", "[zone] [instance_id] - Teleport explicitly to a zone shard", AccountStatus::Player, command_zone_shard) ||
-		command_add("zoneshutdown", "[shortname] - Shut down a zone server", AccountStatus::GMLeadAdmin, command_zoneshutdown) ||
+		command_add("zoneshutdown", "[instance|zone] [Instance ID|Zone ID|Zone Short Name] - Shut down a zone server by Instance ID, Zone ID, or Zone Short Name", AccountStatus::GMLeadAdmin, command_zoneshutdown) ||
+		command_add("zonevariable", "[clear|delete|set|view] - Modify zone variables for your current zone", AccountStatus::GMAdmin, command_zonevariable) ||
 		command_add("zsave", " Saves zheader to the database", AccountStatus::QuestTroupe, command_zsave)
 	) {
 		command_deinit();
@@ -513,7 +513,15 @@ int command_realdispatch(Client *c, std::string message, bool ignore_status)
 		parse->EventPlayer(EVENT_GM_COMMAND, c, message, 0);
 	}
 
-	if (player_event_logs.IsEventEnabled(PlayerEvent::GM_COMMAND) && message != "#help") {
+	bool log_command = true;
+	for (auto &cmd: Strings::Split(RuleS(Logging, PlayerEventsIgnoreGMCommands), ",")) {
+		if (Strings::Contains(command, Strings::ToLower(cmd))) {
+			log_command = false;
+			break;
+		}
+	}
+
+	if (PlayerEventLogs::Instance()->IsEventEnabled(PlayerEvent::GM_COMMAND) && log_command) {
 		auto e = PlayerEvent::GMCommandEvent{
 			.message = message,
 			.target = c->GetTarget() ? c->GetTarget()->GetName() : "NONE"
@@ -774,160 +782,3 @@ void command_bot(Client *c, const Seperator *sep)
 		c->Message(Chat::Red, "Bots are disabled on this server.");
 	}
 }
-
-#include "gm_commands/acceptrules.cpp"
-#include "gm_commands/advnpcspawn.cpp"
-#include "gm_commands/aggrozone.cpp"
-#include "gm_commands/ai.cpp"
-#include "gm_commands/appearance.cpp"
-#include "gm_commands/appearanceeffects.cpp"
-#include "gm_commands/attack.cpp"
-#include "gm_commands/augmentitem.cpp"
-#include "gm_commands/ban.cpp"
-#include "gm_commands/bugs.cpp"
-#include "gm_commands/camerashake.cpp"
-#include "gm_commands/castspell.cpp"
-#include "gm_commands/chat.cpp"
-#include "gm_commands/clearxtargets.cpp"
-#include "gm_commands/copycharacter.cpp"
-#include "gm_commands/corpse.cpp"
-#include "gm_commands/corpsefix.cpp"
-#include "gm_commands/countitem.cpp"
-#include "gm_commands/damage.cpp"
-#include "gm_commands/databuckets.cpp"
-#include "gm_commands/dbspawn2.cpp"
-#include "gm_commands/delacct.cpp"
-#include "gm_commands/delpetition.cpp"
-#include "gm_commands/depop.cpp"
-#include "gm_commands/depopzone.cpp"
-#include "gm_commands/devtools.cpp"
-#include "gm_commands/disablerecipe.cpp"
-#include "gm_commands/disarmtrap.cpp"
-#include "gm_commands/doanim.cpp"
-#include "gm_commands/door.cpp"
-#include "gm_commands/door_manipulation.cpp"
-#include "gm_commands/dye.cpp"
-#include "gm_commands/dz.cpp"
-#include "gm_commands/dzkickplayers.cpp"
-#include "gm_commands/editmassrespawn.cpp"
-#include "gm_commands/emote.cpp"
-#include "gm_commands/emptyinventory.cpp"
-#include "gm_commands/enablerecipe.cpp"
-#include "gm_commands/entityvariable.cpp"
-#include "gm_commands/exptoggle.cpp"
-#include "gm_commands/faction.cpp"
-#include "gm_commands/evolving_items.cpp"
-#include "gm_commands/feature.cpp"
-#include "gm_commands/find.cpp"
-#include "gm_commands/fish.cpp"
-#include "gm_commands/fixmob.cpp"
-#include "gm_commands/flagedit.cpp"
-#include "gm_commands/fleeinfo.cpp"
-#include "gm_commands/forage.cpp"
-#include "gm_commands/gearup.cpp"
-#include "gm_commands/giveitem.cpp"
-#include "gm_commands/givemoney.cpp"
-#include "gm_commands/gmzone.cpp"
-#include "gm_commands/goto.cpp"
-#include "gm_commands/grantaa.cpp"
-#include "gm_commands/grid.cpp"
-#include "gm_commands/guild.cpp"
-#include "gm_commands/hp.cpp"
-#include "gm_commands/illusion_block.cpp"
-#include "gm_commands/instance.cpp"
-#include "gm_commands/interrogateinv.cpp"
-#include "gm_commands/interrupt.cpp"
-#include "gm_commands/invsnapshot.cpp"
-#include "gm_commands/ipban.cpp"
-#include "gm_commands/kick.cpp"
-#include "gm_commands/kill.cpp"
-#include "gm_commands/killallnpcs.cpp"
-#include "gm_commands/list.cpp"
-#include "gm_commands/lootsim.cpp"
-#include "gm_commands/loc.cpp"
-#include "gm_commands/logs.cpp"
-#include "gm_commands/makepet.cpp"
-#include "gm_commands/memspell.cpp"
-#include "gm_commands/merchantshop.cpp"
-#include "gm_commands/modifynpcstat.cpp"
-#include "gm_commands/movechar.cpp"
-#include "gm_commands/movement.cpp"
-#include "gm_commands/myskills.cpp"
-#include "gm_commands/mysql.cpp"
-#include "gm_commands/mystats.cpp"
-#include "gm_commands/npccast.cpp"
-#include "gm_commands/npcedit.cpp"
-#include "gm_commands/npceditmass.cpp"
-#include "gm_commands/npcemote.cpp"
-#include "gm_commands/npcloot.cpp"
-#include "gm_commands/npcsay.cpp"
-#include "gm_commands/npcshout.cpp"
-#include "gm_commands/npcspawn.cpp"
-#include "gm_commands/npctypespawn.cpp"
-#include "gm_commands/nudge.cpp"
-#include "gm_commands/nukebuffs.cpp"
-#include "gm_commands/nukeitem.cpp"
-#include "gm_commands/object.cpp"
-#include "gm_commands/object_manipulation.cpp"
-#include "gm_commands/parcels.cpp"
-#include "gm_commands/path.cpp"
-#include "gm_commands/peqzone.cpp"
-#include "gm_commands/petitems.cpp"
-#include "gm_commands/petname.cpp"
-#include "gm_commands/picklock.cpp"
-#include "gm_commands/profanity.cpp"
-#include "gm_commands/push.cpp"
-#include "gm_commands/raidloot.cpp"
-#include "gm_commands/randomfeatures.cpp"
-#include "gm_commands/refreshgroup.cpp"
-#include "gm_commands/reload.cpp"
-#include "gm_commands/removeitem.cpp"
-#include "gm_commands/repop.cpp"
-#include "gm_commands/resetaa.cpp"
-#include "gm_commands/resetaa_timer.cpp"
-#include "gm_commands/resetdisc_timer.cpp"
-#include "gm_commands/revoke.cpp"
-#include "gm_commands/roambox.cpp"
-#include "gm_commands/rules.cpp"
-#include "gm_commands/save.cpp"
-#include "gm_commands/scale.cpp"
-#include "gm_commands/scribespell.cpp"
-#include "gm_commands/scribespells.cpp"
-#include "gm_commands/sendzonespawns.cpp"
-#include "gm_commands/sensetrap.cpp"
-#include "gm_commands/serverrules.cpp"
-#include "gm_commands/set.cpp"
-#include "gm_commands/show.cpp"
-#include "gm_commands/shutdown.cpp"
-#include "gm_commands/spawn.cpp"
-#include "gm_commands/spawneditmass.cpp"
-#include "gm_commands/spawnfix.cpp"
-#include "gm_commands/faction_association.cpp"
-#include "gm_commands/stun.cpp"
-#include "gm_commands/summon.cpp"
-#include "gm_commands/summonburiedplayercorpse.cpp"
-#include "gm_commands/summonitem.cpp"
-#include "gm_commands/suspend.cpp"
-#include "gm_commands/suspendmulti.cpp"
-#include "gm_commands/takeplatinum.cpp"
-#include "gm_commands/task.cpp"
-#include "gm_commands/traindisc.cpp"
-#include "gm_commands/tune.cpp"
-#include "gm_commands/undye.cpp"
-#include "gm_commands/unmemspell.cpp"
-#include "gm_commands/unmemspells.cpp"
-#include "gm_commands/unscribespell.cpp"
-#include "gm_commands/unscribespells.cpp"
-#include "gm_commands/untraindisc.cpp"
-#include "gm_commands/untraindiscs.cpp"
-#include "gm_commands/wc.cpp"
-#include "gm_commands/worldshutdown.cpp"
-#include "gm_commands/worldwide.cpp"
-#include "gm_commands/wp.cpp"
-#include "gm_commands/wpadd.cpp"
-#include "gm_commands/zone.cpp"
-#include "gm_commands/zonebootup.cpp"
-#include "gm_commands/zoneshutdown.cpp"
-#include "gm_commands/zone_instance.cpp"
-#include "gm_commands/zone_shard.cpp"
-#include "gm_commands/zsave.cpp"

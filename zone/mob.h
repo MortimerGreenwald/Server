@@ -20,7 +20,7 @@
 #define MOB_H
 
 #include "common.h"
-#include "data_bucket.h"
+#include "../common/data_bucket.h"
 #include "entity.h"
 #include "hate_list.h"
 #include "pathfinder_interface.h"
@@ -98,7 +98,6 @@ class Mob : public Entity {
 public:
 	enum CLIENT_CONN_STATUS { CLIENT_CONNECTING, CLIENT_CONNECTED, CLIENT_LINKDEAD,
 						CLIENT_KICKED, DISCONNECTED, CLIENT_ERROR, CLIENT_CONNECTINGALL };
-	enum eStandingPetOrder { SPO_Follow, SPO_Sit, SPO_Guard, SPO_FeignDeath };
 
 	struct MobSpecialAbility {
 		MobSpecialAbility() {
@@ -192,7 +191,8 @@ public:
 		bool in_always_aggros_foes,
 		int32 in_heroic_strikethrough,
 		bool keeps_sold_items,
-		int64 in_hp_regen_per_second = 0
+		int64 in_hp_regen_per_second = 0,
+		uint32 npc_tint_id = 0
 	);
 	virtual ~Mob();
 
@@ -206,6 +206,11 @@ public:
 	Timer                              m_scan_close_mobs_timer;
 	Timer                              m_see_close_mobs_timer;
 	Timer                              m_mob_check_moving_timer;
+
+	uint16 m_last_wearchange_race_id = 0;
+	// client_id -> slot_id -> key
+	std::unordered_map<uint32_t, std::unordered_map<uint8_t, uint64_t>> m_last_seen_wearchange;
+	Timer m_clear_wearchange_cache_timer;
 
 	// Bot attack flag
 	Timer bot_attack_flag_timer;
@@ -595,7 +600,7 @@ public:
 	inline const char* GetName() const { return name; }
 	inline const char* GetOrigName() const { return orig_name; }
 	inline const char* GetLastName() const { return lastname; }
-	inline const eStandingPetOrder GetPreviousPetOrder() const { return m_previous_pet_order; }
+	inline const uint8 GetPreviousPetOrder() const { return m_previous_pet_order; }
 	const char *GetCleanName();
 	virtual void SetName(const char *new_name = nullptr) { new_name ? strn0cpy(name, new_name, 64) :
 		strn0cpy(name, GetName(), 64); return; };
@@ -671,6 +676,7 @@ public:
 		((static_cast<float>(current_mana) / max_mana) * 100); }
 	virtual int64 CalcMaxMana();
 	uint32 GetNPCTypeID() const { return npctype_id; }
+	inline bool IsZoneController() const { return npctype_id == ZONE_CONTROLLER_NPC_ID; }
 	void SetNPCTypeID(uint32 npctypeid) { npctype_id = npctypeid; }
 	inline const glm::vec4& GetPosition() const { return m_Position; }
 	inline void SetPosition(const float x, const float y, const float z) { m_Position.x = x; m_Position.y = y; m_Position.z = z; }
@@ -797,7 +803,7 @@ public:
 	static bool CheckLosFN(glm::vec3 posWatcher, float sizeWatcher, glm::vec3 posTarget, float sizeTarget);
 	virtual bool CheckWaterLoS(Mob* m);
 	bool CheckPositioningLosFN(Mob* other, float posX, float posY, float posZ);
-	bool CheckLosCheat(Mob* other); //door skipping checks for LoS
+	bool CheckDoorLoSCheat(Mob* other); //door skipping checks for LoS
 	bool CheckLosCheatExempt(Mob* other); //exemptions to bypass los
 	bool DoLosChecks(Mob* other);
 	inline void SetLastLosState(bool value) { last_los_check = value; }
@@ -961,7 +967,7 @@ public:
 	uint16 GetSympatheticFocusEffect(focusType type, uint16 spell_id);
 	bool TryFadeEffect(int slot);
 	void DispelMagic(Mob* casterm, uint16 spell_id, int effect_value);
-	uint16 GetSpellEffectResistChance(uint16 spell_id);
+	bool TrySpellEffectResist(uint16 spell_id);
 	int32 GetVulnerability(Mob *caster, uint32 spell_id, uint32 ticsremaining, bool from_buff_tic = false);
 	int64 GetFcDamageAmtIncoming(Mob *caster, int32 spell_id, bool from_buff_tic = false);
 	int64 GetFocusIncoming(focusType type, int effect, Mob *caster, uint32 spell_id); //**** This can be removed when bot healing focus code is updated ****
@@ -1065,6 +1071,7 @@ public:
 	void SendWearChangeAndLighting(int8 last_texture);
 	inline uint8 GetActiveLightType() { return m_Light.Type[EQ::lightsource::LightActive]; }
 	bool UpdateActiveLight(); // returns true if change, false if no change
+	uint32 GetNpcTintId() { return m_npc_tint_id; }
 
 	EQ::LightSourceProfile* GetLightProfile() { return &m_Light; }
 
@@ -1075,14 +1082,14 @@ public:
 	Mob* GetUltimateOwner();
 	void SetPetID(uint16 NewPetID);
 	inline uint16 GetPetID() const { return petid; }
-	inline PetType GetPetType() const { return type_of_pet; }
-	void SetPetType(PetType p) { type_of_pet = p; }
+	inline uint8 GetPetType() const { return type_of_pet; }
+	void SetPetType(uint8 pet_type) { type_of_pet = pet_type; }
 	inline int16 GetPetPower() const { return (petpower < 0) ? 0 : petpower; }
 	void SetPetPower(int16 p) { if (p < 0) petpower = 0; else petpower = p; }
-	bool IsFamiliar() const { return type_of_pet == petFamiliar; }
-	bool IsAnimation() const { return type_of_pet == petAnimation; }
-	bool IsCharmed() const { return type_of_pet == petCharmed; }
-	bool IsTargetLockPet() const { return type_of_pet == petTargetLock; }
+	bool IsFamiliar() const { return type_of_pet == PetType::Familiar; }
+	bool IsAnimation() const { return type_of_pet == PetType::Animation; }
+	bool IsCharmed() const { return type_of_pet == PetType::Charmed; }
+	bool IsTargetLockPet() const { return type_of_pet == PetType::TargetLock; }
 	inline uint32 GetPetTargetLockID() { return pet_targetlock_id; };
 	inline void SetPetTargetLockID(uint32 value) { pet_targetlock_id = value; };
 	void SetOwnerID(uint16 new_owner_id);
@@ -1124,7 +1131,7 @@ public:
 
 	virtual void SetAttackTimer();
 	inline void SetInvul(bool invul) { invulnerable=invul; }
-	inline bool GetInvul(void) { return invulnerable; }
+	inline bool GetInvul() { return invulnerable; }
 	void SetExtraHaste(int haste, bool need_to_save = true);
 	inline int GetExtraHaste() { return extra_haste; }
 	virtual int GetHaste();
@@ -1204,8 +1211,8 @@ public:
 	inline const float GetAssistRange() const { return (spellbonuses.AssistRange == -1) ? pAssistRange : spellbonuses.AssistRange; }
 
 
-	void SetPetOrder(eStandingPetOrder i);
-	inline const eStandingPetOrder GetPetOrder() const { return pStandingPetOrder; }
+	void SetPetOrder(uint8 pet_order);
+	inline const uint8 GetPetOrder() const { return m_pet_order; }
 	inline void SetHeld(bool nState) { held = nState; }
 	inline const bool IsHeld() const { return held; }
 	inline void SetGHeld(bool nState) { gheld = nState; }
@@ -1292,7 +1299,7 @@ public:
 	bool IsPetAggroExempt(Mob *pet_owner);
 
 	void InstillDoubt(Mob *who);
-	bool Charmed() const { return type_of_pet == petCharmed; }
+	bool Charmed() const { return type_of_pet == PetType::Charmed; }
 	static uint32 GetLevelHP(uint8 tlevel);
 	uint32 GetZoneID() const; //for perl
 	uint16 GetInstanceVersion() const; //for perl
@@ -1501,6 +1508,7 @@ public:
 	void CalcHeroicBonuses(StatBonuses* newbon);
 
 	DataBucketKey GetScopedBucketKeys();
+	bool LoadDataBucketsCache();
 
 	bool IsCloseToBanker();
 
@@ -1509,6 +1517,7 @@ public:
 
 	void ClearDataBucketCache();
 	bool IsGuildmaster() const;
+	bool IsDestroying() const { return m_destroying; }
 
 protected:
 	void CommonDamage(Mob* other, int64 &damage, const uint16 spell_id, const EQ::skills::SkillType attack_skill, bool &avoidable, const int8 buffslot, const bool iBuffTic, eSpecialAttacks specal = eSpecialAttacks::None);
@@ -1586,7 +1595,7 @@ protected:
 	StatBonuses aabonuses;
 	uint16 petid;
 	uint16 ownerid;
-	PetType type_of_pet;
+	uint8 type_of_pet;
 	int16 petpower;
 	uint32 follow_id;
 	uint32 follow_dist;
@@ -1595,6 +1604,7 @@ protected:
 	bool rare_spawn;
 	int32 heroic_strikethrough;
 	bool keeps_sold_items;
+	uint32 m_npc_tint_id;
 
 	uint32 m_PlayerState;
 	uint32 GetPlayerState() { return m_PlayerState; }
@@ -1814,8 +1824,8 @@ protected:
 	Timer viral_timer;
 
 	// MobAI stuff
-	eStandingPetOrder pStandingPetOrder;
-	eStandingPetOrder m_previous_pet_order;
+	uint8 m_pet_order;
+	uint8 m_previous_pet_order;
 	uint32 minLastFightingDelayMoving;
 	uint32 maxLastFightingDelayMoving;
 	float pAggroRange = 0;
@@ -1931,6 +1941,7 @@ private:
 	EQ::InventoryProfile m_inv;
 	std::shared_ptr<HealRotation> m_target_of_heal_rotation;
 	bool m_manual_follow;
+	bool m_destroying;
 
 	void SetHeroicStrBonuses(StatBonuses* n);
 	void SetHeroicStaBonuses(StatBonuses* n);

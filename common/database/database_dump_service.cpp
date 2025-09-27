@@ -50,7 +50,7 @@ bool DatabaseDumpService::IsMySQLInstalled()
 {
 	std::string version_output = GetMySQLVersion();
 
-	return version_output.find("mysql") != std::string::npos && version_output.find("Ver") != std::string::npos;
+	return version_output.find("mysql") != std::string::npos && (version_output.find("Ver") != std::string::npos || version_output.find("from") != std::string::npos);
 }
 
 /**
@@ -204,7 +204,7 @@ void DatabaseDumpService::DatabaseDump()
 	}
 
 	if (IsDumpOutputToConsole()) {
-		LogSys.SilenceConsoleLogging();
+		EQEmuLogSys::Instance()->SilenceConsoleLogging();
 	}
 
 	LogInfo("MySQL installed [{}]", GetMySQLVersion());
@@ -324,7 +324,7 @@ void DatabaseDumpService::DatabaseDump()
 	}
 
 	if (!IsDumpOutputToConsole()) {
-		LogSys.LoadLogSettingsDefaults();
+		EQEmuLogSys::Instance()->LoadLogSettingsDefaults();
 	}
 
 	if (!pipe_file.empty()) {

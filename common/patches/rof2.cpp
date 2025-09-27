@@ -81,7 +81,7 @@ namespace RoF2
 		//create our opcode manager if we havent already
 		if (opcodes == nullptr) {
 
-			std::string opfile = fmt::format("{}/patch_{}.conf", path.GetPatchPath(), name);
+			std::string opfile = fmt::format("{}/patch_{}.conf", PathManager::Instance()->GetPatchPath(), name);
 
 			//load up the opcode manager.
 			//TODO: figure out how to support shared memory with multiple patches...
@@ -123,7 +123,7 @@ namespace RoF2
 		//we need to go to every stream and replace it's manager.
 
 		if (opcodes != nullptr) {
-			std::string opfile = fmt::format("{}/patch_{}.conf", path.GetPatchPath(), name);
+			std::string opfile = fmt::format("{}/patch_{}.conf", PathManager::Instance()->GetPatchPath(), name);
 			if (!opcodes->ReloadOpcodes(opfile.c_str())) {
 				LogNetcode("[OPCODES] Error reloading opcodes file [{}] for patch [{}]", opfile.c_str(), name);
 				return;
@@ -4688,7 +4688,7 @@ namespace RoF2
 			Bitfields->linkdead               = 0;
 			Bitfields->showhelm               = emu->showhelm;
 			Bitfields->trader                 = emu->trader ? 1 : 0;
-			Bitfields->targetable             = 1;
+			Bitfields->targetable             = emu->NPC ? emu->untargetable : 1;
 			Bitfields->targetable_with_hotkey = emu->targetable_with_hotkey ? 1 : 0;
 			Bitfields->showname               = ShowName;
 
@@ -4839,13 +4839,13 @@ namespace RoF2
 
 			VARSTRUCT_ENCODE_TYPE(uint32, Buffer, emu->petOwnerId);
 
-			VARSTRUCT_ENCODE_TYPE(uint8, Buffer, 0); // FindBits MQ2 name
+			VARSTRUCT_ENCODE_TYPE(uint8, Buffer, 0);                 // FindBits MQ2 name
 			VARSTRUCT_ENCODE_TYPE(uint32, Buffer, emu->PlayerState);
-			VARSTRUCT_ENCODE_TYPE(uint32, Buffer, 0); // NpcTintIndex
-			VARSTRUCT_ENCODE_TYPE(uint32, Buffer, 0); // PrimaryTintIndex
-			VARSTRUCT_ENCODE_TYPE(uint32, Buffer, 0); // SecondaryTintIndex
-			VARSTRUCT_ENCODE_TYPE(uint32, Buffer, 0xffffffff); // These do something with OP_WeaponEquip1
-			VARSTRUCT_ENCODE_TYPE(uint32, Buffer, 0xffffffff); // ^
+			VARSTRUCT_ENCODE_TYPE(uint32, Buffer, emu->npc_tint_id); // NpcTintIndex
+			VARSTRUCT_ENCODE_TYPE(uint32, Buffer, 0);                // PrimaryTintIndex
+			VARSTRUCT_ENCODE_TYPE(uint32, Buffer, 0);                // SecondaryTintIndex
+			VARSTRUCT_ENCODE_TYPE(uint32, Buffer, 0xffffffff);       // These do something with OP_WeaponEquip1
+			VARSTRUCT_ENCODE_TYPE(uint32, Buffer, 0xffffffff);       // ^
 
 			if ((emu->NPC == 0) || (emu->race <= Race::Gnome) || (emu->race == Race::Iksar) ||
 					(emu->race == Race::VahShir) || (emu->race == Race::Froglok2) || (emu->race == Race::Drakkin)
@@ -6481,7 +6481,7 @@ namespace RoF2
 		hdr.scaled_value   = (inst->IsScaling() ? (inst->GetExp() / 100) : 0);
 		hdr.instance_id    = (inst->GetMerchantSlot() ? inst->GetMerchantSlot() : inst->GetSerialNumber());
 		hdr.parcel_item_id = packet_type == ItemPacketParcel ? inst->GetID() : 0;
-		if (item->EvolvingItem) {
+		if (item->EvolvingItem && packet_type != ItemPacketParcel && packet_type != ItemPacketMerchant) {
 			hdr.instance_id    = inst->GetEvolveUniqueID() & 0xFFFFFFFF; //lower dword
 			hdr.parcel_item_id = inst->GetEvolveUniqueID() >> 32;        //upper dword
 		}
@@ -6500,6 +6500,7 @@ namespace RoF2
 
 		if (item->EvolvingItem > 0) {
 			RoF2::structs::EvolvingItem_Struct evotop;
+			inst->CalculateEvolveProgression();
 
 			evotop.final_item_id    = inst->GetEvolveFinalItemID();
 			evotop.evolve_level     = item->EvolvingLevel;

@@ -73,6 +73,7 @@ namespace EQ
 #include "../common/guild_base.h"
 #include "../common/repositories/buyer_buy_lines_repository.h"
 #include "../common/repositories/character_evolving_items_repository.h"
+#include "../common/repositories/player_titlesets_repository.h"
 
 #include "bot_structs.h"
 
@@ -97,7 +98,6 @@ namespace EQ
 #define MAX_SPECIALIZED_SKILL 50
 
 extern Zone* zone;
-extern TaskManager *task_manager;
 
 class CLIENTPACKET
 {
@@ -326,12 +326,17 @@ public:
 	void TraderStartTrader(const EQApplicationPacket *app);
 //	void TraderPriceUpdate(const EQApplicationPacket *app);
 	uint8 WithCustomer(uint16 NewCustomer);
+	std::vector<uint32> GetKeyRing() { return keyring; }
 	void KeyRingLoad();
 	bool KeyRingAdd(uint32 item_id);
 	bool KeyRingCheck(uint32 item_id);
 	bool KeyRingClear();
 	bool KeyRingRemove(uint32 item_id);
-	void KeyRingList();
+	void KeyRingList(Client* c = nullptr);
+	bool IsNameChangeAllowed();
+	void InvokeChangeNameWindow(bool immediate = true);
+	bool ClearNameChange();
+	void GrantNameChange();
 	bool IsPetNameChangeAllowed();
 	void GrantPetNameChange();
 	void ClearPetNameChange();
@@ -404,6 +409,7 @@ public:
 	void LoadParcels();
 	std::map<uint32, CharacterParcelsRepository::CharacterParcels> GetParcels() { return m_parcels; }
 	int32 FindNextFreeParcelSlot(uint32 char_id);
+	int32 FindNextFreeParcelSlotUsingMemory();
 	void SendParcelIconStatus();
 
 	void SendBecomeTraderToWorld(Client *trader, BazaarTraderBarterActions action);
@@ -442,6 +448,8 @@ public:
 	int64 ValidateBuyLineCost(std::map<uint32, BuylineItemDetails_Struct>& item_map);
 	bool DoBarterBuyerChecks(BuyerLineSellItem_Struct& sell_line);
 	bool DoBarterSellerChecks(BuyerLineSellItem_Struct& sell_line);
+	void CancelBuyerTradeWindow();
+	void CancelTraderTradeWindow();
 
 	void FillSpawnStruct(NewSpawn_Struct* ns, Mob* ForWho);
 	bool ShouldISpawnFor(Client *c) { return !GMHideMe(c) && !IsHoveringForRespawn(); }
@@ -476,6 +484,9 @@ public:
 
 	virtual bool Save() { return Save(0); }
 	bool Save(uint8 iCommitNow); // 0 = delayed, 1=async now, 2=sync now
+	inline void SaveCharacterData() {
+		database.SaveCharacterData(this, &m_pp, &m_epp);
+	};
 
 	/* New PP Save Functions */
 	bool SaveCurrency(){ return database.SaveCharacterCurrency(this->CharacterID(), &m_pp); }
@@ -490,9 +501,19 @@ public:
 	void Kick(const std::string &reason);
 	void WorldKick();
 	inline uint8 GetAnon() const { return m_pp.anon; }
-	inline uint8 GetAFK() const { return AFK; }
+	inline uint8 GetAFK() const { return m_is_afk; }
 	void SetAnon(uint8 anon_flag);
+	inline Client* ResetAFKTimer() {
+		if (!RuleB(Character, EnableAutoAFK)) {
+			return this;
+		}
+
+		m_afk_reset = true;
+		m_last_moved = std::chrono::steady_clock::now();
+		return this;
+	};
 	void SetAFK(uint8 afk_flag);
+	inline bool IsIdle() { return m_is_idle; }
 	inline PlayerProfile_Struct& GetPP() { return m_pp; }
 	inline ExtendedProfile_Struct& GetEPP() { return m_epp; }
 	inline EQ::InventoryProfile& GetInv() { return m_inv; }
@@ -503,12 +524,13 @@ public:
 	inline const InspectMessage_Struct& GetInspectMessage() const { return m_inspect_message; }
 	void ReloadExpansionProfileSetting();
 
-	void SetPetCommandState(int button, int state);
+	void SetPetCommandState(uint8 button, uint8 state);
 
 	bool AutoAttackEnabled() const { return auto_attack; }
 	bool AutoFireEnabled() const { return auto_fire; }
 
-	bool ChangeFirstName(const char* in_firstname,const char* gmname);
+	bool ChangeFirstName(const std::string in_firstname,const std::string gmname);
+	bool ChangeFirstName(const std::string in_firstname);
 
 	void Duck();
 	void Stand();
@@ -1244,9 +1266,10 @@ public:
 	void ResetAllCastbarCooldowns();
 	void ResetCastbarCooldownBySpellID(uint32 spell_id);
 
-	bool CheckTitle(int titleset);
-	void EnableTitle(int titleset);
-	void RemoveTitle(int titleset);
+	bool CheckTitle(int title_set);
+	void EnableTitle(int title_set, bool insert = true);
+	const std::vector<PlayerTitlesetsRepository::PlayerTitlesets>& GetTitles() { return m_player_title_sets; };
+	void RemoveTitle(int title_set);
 
 	void EnteringMessages(Client* client);
 	void SendRules();
@@ -1313,7 +1336,7 @@ public:
 	}
 	inline bool SaveTaskState()
 	{
-		return task_manager != nullptr && task_manager->SaveClientState(this, task_state);
+		return TaskManager::Instance()->SaveClientState(this, task_state);
 	}
 	inline bool IsTaskStateLoaded() { return task_state != nullptr; }
 	inline bool IsTaskActive(int task_id) { return task_state != nullptr && task_state->IsTaskActive(task_id); }
@@ -1387,14 +1410,14 @@ public:
 	}
 	inline void TaskSetSelector(Mob* mob, int task_set_id, bool ignore_cooldown)
 	{
-		if (task_manager && task_state) {
-			task_manager->TaskSetSelector(this, mob, task_set_id, ignore_cooldown);
+		if (task_state) {
+			TaskManager::Instance()->TaskSetSelector(this, mob, task_set_id, ignore_cooldown);
 		}
 	}
 	inline void TaskQuestSetSelector(Mob* mob, const std::vector<int>& tasks, bool ignore_cooldown)
 	{
-		if (task_manager && task_state) {
-			task_manager->TaskQuestSetSelector(this, mob, tasks, ignore_cooldown);
+		if (task_state) {
+			TaskManager::Instance()->TaskQuestSetSelector(this, mob, tasks, ignore_cooldown);
 		}
 	}
 	inline void EnableTask(int task_count, int *task_list)
@@ -1455,6 +1478,7 @@ public:
 	{
 		return task_state ? task_state->CompleteTask(this, task_id) : false;
 	}
+	bool UncompleteTask(int task_id);
 	inline void FailTask(int task_id) { if (task_state) { task_state->FailTask(this, task_id); }}
 	inline int TaskTimeLeft(int task_id) { return (task_state ? task_state->TaskTimeLeft(task_id) : 0); }
 	inline int EnabledTaskCount(int task_set_id)
@@ -1874,7 +1898,7 @@ public:
 	void SendEvolvingPacket(int8 action, const CharacterEvolvingItemsRepository::CharacterEvolvingItems &item);
 	void DoEvolveItemToggle(const EQApplicationPacket* app);
 	void DoEvolveItemDisplayFinalResult(const EQApplicationPacket* app);
-	bool DoEvolveCheckProgression(const EQ::ItemInstance &inst);
+	bool DoEvolveCheckProgression(EQ::ItemInstance &inst);
 	void SendEvolveXPWindowDetails(const EQApplicationPacket* app);
 	void DoEvolveTransferXP(const EQApplicationPacket* app);
 	void SendEvolveXPTransferWindow();
@@ -1909,6 +1933,9 @@ private:
 public:
 	ExternalHandinMoneyReturned GetExternalHandinMoneyReturned() { return m_external_handin_money_returned; }
 	std::vector<uint32_t> GetExternalHandinItemsReturned() { return m_external_handin_items_returned; }
+
+	// used only for testing
+	inline void SetCharacterId(uint32_t id) { character_id = id; }
 
 protected:
 	friend class Mob;
@@ -2023,7 +2050,8 @@ private:
 	uint8 LFGToLevel;
 	bool LFGMatchFilter;
 	char LFGComments[64];
-	bool AFK;
+	bool m_is_afk = false;
+	bool m_is_manual_afk = false;
 	bool auto_attack;
 	bool auto_fire;
 	bool runmode;
@@ -2043,7 +2071,8 @@ private:
 	uint16 trader_id;
 	uint16 customer_id;
 	uint32 account_creation;
-	uint8 firstlogon;
+	bool first_login;
+	bool ingame;
 	uint32 mercid; // current merc
 	uint8 mercSlot; // selected merc slot
 	time_t                                                         m_trader_transaction_date;
@@ -2176,7 +2205,12 @@ private:
 	glm::vec4 m_last_position_before_bulk_update;
 	Timer     m_client_bulk_npc_pos_update_timer;
 	Timer     m_position_update_timer;
-	void      CheckSendBulkNpcPositions();
+	void      CheckSendBulkNpcPositions(bool force = false);
+
+	// afk
+	bool                                  m_is_idle    = false;
+	bool                                  m_afk_reset  = false; // used to trigger next-tic afk reset
+	std::chrono::steady_clock::time_point m_last_moved = std::chrono::steady_clock::now();
 
 	void BulkSendInventoryItems();
 
@@ -2220,6 +2254,7 @@ private:
 	bool m_exp_enabled;
 
 	std::vector<EXPModifier> m_exp_modifiers;
+	std::vector<PlayerTitlesetsRepository::PlayerTitlesets> m_player_title_sets;
 
 	//Anti Spam Stuff
 	Timer *KarmaUpdateTimer;
@@ -2367,6 +2402,9 @@ public:
 	const std::string &GetMailKey() const;
 	void ShowZoneShardMenu();
 	void Handle_OP_ChangePetName(const EQApplicationPacket *app);
+	bool IsFilteredAFKPacket(const EQApplicationPacket *p);
+	void CheckAutoIdleAFK(PlayerPositionUpdateClient_Struct *p);
+	void SyncWorldPositionsToClient(bool ignore_idle = false);
 };
 
 #endif
